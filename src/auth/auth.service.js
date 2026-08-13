@@ -1,29 +1,11 @@
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { env } = require('../config/env');
 const User = require('../models/User');
 const { ApiError } = require('../middleware/errorHandler');
 const { appendAuditLog } = require('../logs/audit.service');
+const { issueTokenPair, verifyRefreshToken } = require('../security/jwt-auth');
+const anomalyService = require('../anomaly/anomaly.service');
 
 const SALT_ROUNDS = 12;
-
-function signAccessToken(user) {
-  return jwt.sign({ sub: String(user._id), role: user.role, tv: user.tokenVersion }, env.jwt.accessSecret, {
-    algorithm: 'HS256',
-    expiresIn: env.jwt.accessTtl,
-  });
-}
-
-function signRefreshToken(user) {
-  return jwt.sign({ sub: String(user._id), tv: user.tokenVersion, type: 'refresh' }, env.jwt.refreshSecret, {
-    algorithm: 'HS256',
-    expiresIn: env.jwt.refreshTtl,
-  });
-}
-
-function issueTokenPair(user) {
-  return { accessToken: signAccessToken(user), refreshToken: signRefreshToken(user) };
-}
 
 async function register({ name, email, password, role, centerId }, actor) {
   const existing = await User.findOne({ email }).lean();
@@ -62,6 +44,14 @@ async function login({ email, password }, context) {
       targetId: String(user._id),
       metadata: { ip: context?.ip },
     });
+    await anomalyService.recordEvent({
+      type: 'LOGIN',
+      success: false,
+      userId: user._id,
+      role: user.role,
+      centerId: user.centerId || null,
+      ip: context?.ip,
+    });
     throw new ApiError(401, 'Invalid credentials');
   }
 
@@ -75,6 +65,14 @@ async function login({ email, password }, context) {
     targetId: String(user._id),
     metadata: { ip: context?.ip },
   });
+  await anomalyService.recordEvent({
+    type: 'LOGIN',
+    success: true,
+    userId: user._id,
+    role: user.role,
+    centerId: user.centerId || null,
+    ip: context?.ip,
+  });
 
   return { user, ...tokens };
 }
@@ -82,12 +80,9 @@ async function login({ email, password }, context) {
 async function refresh({ refreshToken }) {
   let payload;
   try {
-    payload = jwt.verify(refreshToken, env.jwt.refreshSecret, { algorithms: ['HS256'] });
+    payload = verifyRefreshToken(refreshToken);
   } catch (err) {
     throw new ApiError(401, 'Invalid or expired refresh token');
-  }
-  if (payload.type !== 'refresh') {
-    throw new ApiError(401, 'Invalid token type');
   }
 
   const user = await User.findById(payload.sub);

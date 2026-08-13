@@ -28,6 +28,10 @@ function isSequential(fromStep, toStep) {
  * Evaluates whether `role` may move a paper from `fromStep` to `toStep`.
  * Does NOT check time-lock (examTime) — that's a separate, orthogonal check
  * applied specifically to the OPENED_FOR_EXAM transition and to decrypt/print.
+ *
+ * Returns a machine-readable `code` alongside the human-readable `reason` so
+ * callers (the anomaly engine, in particular) can key off a stable value
+ * instead of pattern-matching the reason string.
  */
 function evaluateTransition({ fromStep, toStep, role }) {
   const key = `${fromStep}->${toStep}`;
@@ -36,6 +40,7 @@ function evaluateTransition({ fromStep, toStep, role }) {
   if (!allowedRoles) {
     return {
       allowed: false,
+      code: isSequential(fromStep, toStep) ? 'NO_RULE' : 'SKIP_STEP',
       reason: isSequential(fromStep, toStep)
         ? 'No transition rule defined for this step pair'
         : 'Transition skips or reorders the custody sequence',
@@ -43,10 +48,10 @@ function evaluateTransition({ fromStep, toStep, role }) {
   }
 
   if (!allowedRoles.includes(role)) {
-    return { allowed: false, reason: `Role ${role} is not authorized for ${key}` };
+    return { allowed: false, code: 'UNEXPECTED_ROLE', reason: `Role ${role} is not authorized for ${key}` };
   }
 
-  return { allowed: true, reason: null };
+  return { allowed: true, code: null, reason: null };
 }
 
 module.exports = { ALLOWED_TRANSITIONS, evaluateTransition, isSequential, stepIndex };

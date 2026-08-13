@@ -13,6 +13,7 @@
     "dev": "node --watch src/server.js",
     "seed:admin": "node scripts/seedAdmin.js",
     "verify:chain": "node scripts/verifyHashChain.js",
+    "rotate:key": "node scripts/rotateKey.js",
     "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "pino-pretty": "^11.2.2"
+    "pino-pretty": "^11.2.2",
+    "supertest": "^7.2.2"
   }
 }

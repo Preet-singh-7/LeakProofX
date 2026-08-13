@@ -12,7 +12,14 @@ const auditLogSchema = new mongoose.Schema(
     currentHash: { type: String, required: true, unique: true, index: true },
     timestamp: { type: Date, required: true, default: Date.now },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    // Mongoose's default minimize:true strips empty-object fields (like an
+    // empty metadata: {}) before writing. That would make the persisted
+    // document diverge from the payload the hash chain was computed over,
+    // so it's disabled here — the audit trail must store exactly what was hashed.
+    minimize: false,
+  }
 );
 
 // Append-only: this collection must never be updated or deleted through the app layer.

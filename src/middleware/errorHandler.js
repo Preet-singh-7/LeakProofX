@@ -1,10 +1,15 @@
 const logger = require('../logs/logger');
 
 class ApiError extends Error {
-  constructor(statusCode, message, details = undefined) {
+  constructor(statusCode, message, details = undefined, code = undefined) {
     super(message);
     this.statusCode = statusCode;
     this.details = details;
+    // Machine-readable failure reason (e.g. 'TIME_WINDOW', 'UNEXPECTED_ROLE') —
+    // distinct from the HTTP-response `error` field convention already in
+    // errorHandler below. Consumed by the anomaly engine so rule conditions
+    // don't have to pattern-match human-readable messages.
+    this.failureCode = code;
   }
 }
 

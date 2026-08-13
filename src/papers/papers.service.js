@@ -6,6 +6,7 @@ const { signQrToken, renderQrDataUrl } = require('./qr');
 const { evaluateTransition } = require('./custody');
 const { assertWithinAccessWindow, assertExamTimeReached } = require('./timeLock');
 const { appendAuditLog } = require('../logs/audit.service');
+const anomalyService = require('../anomaly/anomaly.service');
 const { ApiError } = require('../middleware/errorHandler');
 const { CUSTODY_STEPS, PAPER_STATUS, ROLES } = require('../config/constants');
 
@@ -75,6 +76,13 @@ async function getQrImage(id) {
 async function accessPaperContent(id, actor, { action, location, deviceId }) {
   const paper = await getPaperById(id);
   const now = new Date();
+  const eventType = action.startsWith('PAPER_DECRYPTED') ? 'DECRYPT' : 'PRINT';
+  // Best-effort scoping for Alert.centerId: prefer the acting user's own
+  // center, fall back to the paper's first assigned center. A paper can be
+  // assigned to multiple centers, so this is an approximation, not an exact
+  // "the event happened at this center" fact — acceptable for MVP triage
+  // filtering, not something downstream logic should treat as authoritative.
+  const centerId = actor.centerId || paper.assignedCenterIds?.[0] || null;
 
   try {
     assertWithinAccessWindow(paper.examTime, now);
@@ -86,7 +94,7 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
         role: actor.role,
       });
       if (!transitionCheck.allowed) {
-        throw new ApiError(403, transitionCheck.reason);
+        throw new ApiError(403, transitionCheck.reason, undefined, transitionCheck.code);
       }
       assertExamTimeReached(paper.examTime, now);
 
@@ -109,7 +117,9 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
     } else if (paper.currentCustodyStep !== CUSTODY_STEPS.OPENED_FOR_EXAM) {
       throw new ApiError(
         409,
-        `Paper is in custody state ${paper.currentCustodyStep} and cannot be accessed for content`
+        `Paper is in custody state ${paper.currentCustodyStep} and cannot be accessed for content`,
+        undefined,
+        'CUSTODY_STATE'
       );
     }
 
@@ -128,6 +138,18 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
       targetId: String(paper._id),
       metadata: { location, deviceId, success: true },
     });
+    await anomalyService.recordEvent({
+      type: eventType,
+      success: true,
+      userId: actor.id,
+      role: actor.role,
+      paperId: paper._id,
+      centerId,
+      examTime: paper.examTime,
+      now,
+      location,
+      deviceId,
+    });
 
     return { title: paper.title, examName: paper.examName, content: plaintext };
   } catch (err) {
@@ -141,6 +163,19 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
       targetType: 'Paper',
       targetId: String(paper._id),
       metadata: { location, deviceId, success: false, reason: err.message },
+    });
+    await anomalyService.recordEvent({
+      type: eventType,
+      success: false,
+      userId: actor.id,
+      role: actor.role,
+      paperId: paper._id,
+      centerId,
+      examTime: paper.examTime,
+      now,
+      location,
+      deviceId,
+      failureCode: err.failureCode,
     });
     throw err;
   }

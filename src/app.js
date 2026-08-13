@@ -1,12 +1,13 @@
 const express = require('express');
-const helmet = require('helmet');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
 const pinoHttp = require('pino-http');
 
 const { env } = require('./config/env');
 const logger = require('./logs/logger');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
+const { securityHeaders } = require('./security/headers');
+const { corsPolicy } = require('./security/cors');
+const { jsonBodyParser } = require('./security/input-validation');
+const { globalLimiter } = require('./security/rate-limit');
 
 const authRoutes = require('./auth/auth.routes');
 const usersRoutes = require('./users/users.routes');
@@ -21,38 +22,19 @@ function buildApp() {
   app.disable('x-powered-by'); // helmet also strips this; explicit for clarity
   app.set('trust proxy', 1);
 
-  app.use(helmet());
-  app.use(
-    cors({
-      origin(origin, callback) {
-        // Allow same-origin/non-browser requests (no Origin header) and any
-        // origin on the explicit allowlist. Never falls back to "*" — this
-        // API always serves authenticated, credentialed requests.
-        if (!origin || env.allowedOrigins.includes(origin)) {
-          return callback(null, true);
-        }
-        return callback(new Error(`Origin ${origin} is not allowed by CORS policy`));
-      },
-      credentials: true,
-    })
-  );
-  app.use(express.json({ limit: '10kb' }));
+  app.use(securityHeaders());
+  app.use(corsPolicy());
   app.use(pinoHttp({ logger }));
-
-  // Baseline IP rate limit on the whole API. Phase 2 (security/rate-limit.js)
-  // adds stricter, route-specific limits for auth and decrypt/print, and a
-  // path to Redis-backed distributed limiting for multi-instance deployment.
-  app.use(
-    rateLimit({
-      windowMs: 15 * 60 * 1000,
-      limit: 300,
-      standardHeaders: true,
-      legacyHeaders: false,
-    })
-  );
+  app.use(globalLimiter);
 
   app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
+  // No blanket body-size limit here: paper content can legitimately be up to
+  // 2MB (see papers.validation.js), while every other endpoint's payload is
+  // metadata-sized. Each router applies the body limit appropriate to what
+  // it actually accepts (src/security/input-validation.js jsonBodyParser),
+  // rather than one global limit that would either reject real paper
+  // uploads or leave every other endpoint needlessly permissive.
   const api = express.Router();
   api.use('/auth', authRoutes);
   api.use('/users', usersRoutes);

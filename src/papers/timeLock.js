@@ -15,10 +15,10 @@ function assertWithinAccessWindow(examTime, now = new Date()) {
   const latest = new Date(examTime.getTime() + postMs);
 
   if (now < earliest) {
-    throw new ApiError(403, `Too early: access opens at ${earliest.toISOString()}`);
+    throw new ApiError(403, `Too early: access opens at ${earliest.toISOString()}`, undefined, 'TIME_WINDOW');
   }
   if (now > latest) {
-    throw new ApiError(403, `Too late: access window closed at ${latest.toISOString()}`);
+    throw new ApiError(403, `Too late: access window closed at ${latest.toISOString()}`, undefined, 'TIME_WINDOW');
   }
 }
 
@@ -29,7 +29,7 @@ function assertWithinAccessWindow(examTime, now = new Date()) {
  */
 function assertExamTimeReached(examTime, now = new Date()) {
   if (now < examTime) {
-    throw new ApiError(403, `Cannot open before scheduled exam time (${examTime.toISOString()})`);
+    throw new ApiError(403, `Cannot open before scheduled exam time (${examTime.toISOString()})`, undefined, 'TOO_EARLY');
   }
 }
 

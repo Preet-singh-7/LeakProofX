@@ -2,7 +2,9 @@ const Paper = require('../models/Paper');
 const TrackingLog = require('../models/TrackingLog');
 const { verifyQrToken } = require('../papers/qr');
 const { evaluateTransition } = require('../papers/custody');
+const { assertExamTimeReached } = require('../papers/timeLock');
 const { appendAuditLog } = require('../logs/audit.service');
+const anomalyService = require('../anomaly/anomaly.service');
 const { ApiError } = require('../middleware/errorHandler');
 const { CUSTODY_STEPS, PAPER_STATUS } = require('../config/constants');
 
@@ -31,7 +33,20 @@ async function recordScan(input, actor) {
   const toStep = input.toStep;
   const timestamp = new Date();
 
-  const check = evaluateTransition({ fromStep, toStep, role: actor.role });
+  let check = evaluateTransition({ fromStep, toStep, role: actor.role });
+
+  // The transition into OPENED_FOR_EXAM carries an additional, unconditional
+  // time-lock requirement (now >= examTime) per the custody spec. This must
+  // hold no matter which API path performs the transition — without this
+  // check here, a raw /tracking/scan call bypasses the time-lock that
+  // /papers/:id/decrypt otherwise enforces (assertExamTimeReached there).
+  if (check.allowed && toStep === CUSTODY_STEPS.OPENED_FOR_EXAM) {
+    try {
+      assertExamTimeReached(paper.examTime, timestamp);
+    } catch (err) {
+      check = { allowed: false, code: err.failureCode || 'TOO_EARLY', reason: err.message };
+    }
+  }
 
   const log = await TrackingLog.create({
     paperId: paper._id,
@@ -56,8 +71,27 @@ async function recordScan(input, actor) {
     metadata: { fromStep, toStep, location: input.location, deviceId: input.deviceId, reason: check.reason },
   });
 
+  const centerId = actor.centerId || paper.assignedCenterIds?.[0] || null;
+
+  const anomalyEvent = {
+    type: 'SCAN',
+    success: check.allowed,
+    userId: actor.id,
+    role: actor.role,
+    paperId: paper._id,
+    centerId,
+    fromStep,
+    toStep,
+    examTime: paper.examTime,
+    now: timestamp,
+    location: input.location,
+    deviceId: input.deviceId,
+    failureCode: check.allowed ? undefined : check.code,
+  };
+
   if (!check.allowed) {
-    throw new ApiError(409, check.reason, { trackingLogId: String(log._id) });
+    await anomalyService.recordEvent(anomalyEvent);
+    throw new ApiError(409, check.reason, { trackingLogId: String(log._id) }, check.code);
   }
 
   paper.currentCustodyStep = toStep;
@@ -65,6 +99,7 @@ async function recordScan(input, actor) {
     paper.status = STATUS_BY_STEP[toStep];
   }
   await paper.save();
+  await anomalyService.recordEvent(anomalyEvent);
 
   return { paper, log };
 }

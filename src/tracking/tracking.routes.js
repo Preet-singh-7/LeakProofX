@@ -1,12 +1,13 @@
 const { Router } = require('express');
 const controller = require('./tracking.controller');
-const validate = require('../middleware/validate');
+const { validate, jsonBodyParser } = require('../security/input-validation');
 const { scanEventSchema, paperIdParamSchema } = require('./tracking.validation');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { ROLES } = require('../config/constants');
 
 const router = Router();
 
+router.use(jsonBodyParser());
 router.use(requireAuth);
 
 router.post(
