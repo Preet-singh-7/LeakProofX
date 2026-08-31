@@ -1,4 +1,4 @@
-const { WEIGHTS } = require('./config');
+const { WEIGHTS, SYNC_DELAY_THRESHOLD_MINUTES } = require('./config');
 const { CUSTODY_STEPS } = require('../config/constants');
 
 /**
@@ -18,6 +18,11 @@ const { CUSTODY_STEPS } = require('../config/constants');
  *                                 // ('SKIP_STEP' | 'UNEXPECTED_ROLE' | 'NO_RULE')
  *                                 // or papers.service ('TIME_WINDOW' |
  *                                 // 'TOO_EARLY' | 'CUSTODY_STATE')
+ *     syncDelayMs,                // SCAN only — set when the mobile scanner
+ *                                 // (Phase 4) submits a scan whose
+ *                                 // clientTimestamp is older than when the
+ *                                 // server actually received it (an
+ *                                 // offline-queued scan synced late)
  *   }
  *
  * Context shape (assembled by anomaly.service.js just before evaluation —
@@ -94,6 +99,15 @@ const RULES = [
     weight: WEIGHTS.R_REPEATED_LOGIN_FAILURE,
     condition(event, context) {
       return event.type === 'LOGIN' && !event.success && context.recentFailedLoginCount >= 3;
+    },
+  },
+  {
+    ruleId: 'R_SYNC_DELAY',
+    description: 'A custody scan synced long after it claims to have actually happened (offline queue on the mobile scanner).',
+    weight: WEIGHTS.R_SYNC_DELAY,
+    condition(event) {
+      if (event.type !== 'SCAN' || typeof event.syncDelayMs !== 'number') return false;
+      return event.syncDelayMs > SYNC_DELAY_THRESHOLD_MINUTES * 60 * 1000;
     },
   },
 ];

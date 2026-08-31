@@ -27,10 +27,24 @@ const WEIGHTS = {
   // a LOGIN event, which would make that wiring a no-op. Complements the
   // authLimiter rate limit (security/rate-limit.js) at the detection layer.
   R_REPEATED_LOGIN_FAILURE: 3,
+  // Phase 4 (mobile scanner): a scan recorded long after it actually
+  // happened (offline device, reconnects hours later) isn't necessarily
+  // malicious, but a large gap between when a custody event claims to have
+  // happened and when the server first heard about it is exactly the kind
+  // of thing that should be visible for review — see anomaly.service.js's
+  // syncDelayMs and rules.js for how "large" is defined.
+  R_SYNC_DELAY: 3,
 };
 
 // How far back "recent" event counts (e.g. repeated failed decrypts) look.
 const LOOKBACK_MINUTES = 15;
+
+// A scan whose (syncedAt - clientTimestamp) gap exceeds this is flagged by
+// R_SYNC_DELAY. 30 minutes comfortably covers normal offline gaps (a
+// courier out of signal for a short drive) without flagging every offline
+// scan — see Phase 4 docs for why this number, and how it's tuned here
+// without touching rules.js or the mobile app.
+const SYNC_DELAY_THRESHOLD_MINUTES = 30;
 
 function severityForScore(riskScore) {
   if (riskScore >= THRESHOLDS.CRITICAL) return 'CRITICAL';
@@ -38,4 +52,4 @@ function severityForScore(riskScore) {
   return null; // below warning threshold — no alert
 }
 
-module.exports = { THRESHOLDS, WEIGHTS, LOOKBACK_MINUTES, severityForScore };
+module.exports = { THRESHOLDS, WEIGHTS, LOOKBACK_MINUTES, SYNC_DELAY_THRESHOLD_MINUTES, severityForScore };

@@ -1,10 +1,43 @@
-# LeakProofX — Backend (Phase 1 + Phase 2)
+# LeakProofX
 
-LeakProofX is an exam paper custody, encryption, and leak-prevention platform.
-This backend now covers Phase 1 (auth, encryption, custody tracking, QR
-generation, time-locked access, tamper-evident audit log) and Phase 2
-(hardened security module + rule-based anomaly/alert engine). Frontend
-dashboard and mobile scanner app land in Phases 3–4.
+An exam-paper custody, encryption, and leak-prevention platform, built in
+five phases: a Node/Express backend (Phases 1–2), a React dashboard
+(`web/`, Phase 3), a React Native/Expo scanner app (`mobile/`, Phase 4),
+and this final consolidation/hardening pass (Phase 5).
+
+The idea in one sentence: a paper is encrypted the moment it's created,
+carries a signed QR code through a fixed, role-gated custody chain from
+board to courier to exam center to invigilator, every step (accepted or
+rejected) is written to a tamper-evident audit trail, and an anomaly
+engine scores anything that looks wrong along the way.
+
+## Where things are documented
+
+This README covers running the backend. Deeper documentation lives in
+`docs/`:
+
+| Doc | What's in it |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | The three components, how they fit together, the data model |
+| [`docs/api.md`](docs/api.md) | Every endpoint — method, role gate, request/response shape |
+| [`docs/flow.md`](docs/flow.md) | How auth, custody transitions, anomaly scoring, and mobile offline sync actually work end to end |
+| [`docs/security.md`](docs/security.md) | The full security model, including Phase 5's hardening fixes |
+| [`docs/demo-script.md`](docs/demo-script.md) | A runnable, live-verified 5-minute walkthrough of the whole system |
+
+Component-specific setup: [`web/README.md`](web/README.md),
+[`mobile/README.md`](mobile/README.md). Phase-by-phase build history (what
+was built, why, and every real bug found and fixed along the way):
+[`outputs/`](outputs/) (Word docs, Phases 1–4).
+
+## Repo layout
+
+```
+src/, scripts/, test/   backend (this README)
+web/                    React dashboard — see web/README.md
+mobile/                 React Native/Expo scanner app — see mobile/README.md
+docs/                   architecture / api / flow / security / demo script
+outputs/                Phase N Word documentation
+```
 
 ## Stack
 
@@ -31,8 +64,8 @@ src/
   models/        Mongoose schemas for all core entities
   config/        env loading, constants, db connection
 scripts/
-  seedAdmin.js       creates the first ADMIN user
-  verifyHashChain.js recomputes and verifies the audit log hash chain
+  seedAdmin.js       creates the first ADMIN user (refuses a default password in production — see docs/security.md)
+  verifyHashChain.js recomputes and verifies the audit log hash chain (--json, --help — see below)
   rotateKey.js       records a paper-encryption key rotation (see "Key rotation")
 test/
   anomaly.test.js    unit tests for every anomaly rule
@@ -84,16 +117,29 @@ test/
    npm run seed:admin
    ```
 
+   In production, this now refuses to run unless `SEED_ADMIN_PASSWORD` is
+   explicitly set — see [`docs/security.md`](docs/security.md#seeding-the-first-admin).
+
 5. Verify the audit hash chain at any time:
 
    ```bash
-   npm run verify:chain
+   npm run verify:chain           # human-readable
+   node scripts/verifyHashChain.js --json   # machine-readable, for CI
+   node scripts/verifyHashChain.js --help
    ```
 
 6. Run the automated test suite (no DB required):
 
    ```bash
    npm test
+   ```
+
+7. Walk through the whole system live — custody chain, a deliberate
+   rejection, the alert it raises, time-locked decrypt, hash-chain
+   verification:
+
+   ```bash
+   # see docs/demo-script.md for the full, copy-pasteable script
    ```
 
 ## Environment variables
@@ -103,84 +149,24 @@ server/DB config, JWT secrets and TTLs, QR signing secret, per-key-id
 encryption keys (`PAPER_ENC_KEY_<keyId>`) plus `ACTIVE_PAPER_KEY_ID`,
 time-lock pre/post windows, allowed CORS origins, and seed-admin credentials.
 
-## API
+## API, roles, and the custody chain
 
-All routes are mounted under `/api/v1`. Auth uses `Authorization: Bearer
-<accessToken>`. Roles: `ADMIN`, `BOARD`, `COURIER`, `CENTER`, `INVIGILATOR`,
-`AUDITOR`.
+Full reference: [`docs/api.md`](docs/api.md). Quick orientation:
 
-- `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`
-- `POST /auth/register` (ADMIN only — no public signup)
-- `GET/POST /users` (ADMIN only)
-- `POST /papers` (BOARD/ADMIN) — encrypts content, issues a signed QR token
-- `GET /papers`, `GET /papers/:id`, `GET /papers/:id/qr`
-- `POST /papers/:id/decrypt`, `POST /papers/:id/print` (INVIGILATOR/ADMIN,
-  time-locked, rate-limited — see below)
-- `POST /tracking/scan` — records a custody transition against a paper's QR
-  token; rejects out-of-order/skipped/wrong-role/too-early transitions but
-  still logs the attempt
-- `GET /tracking/:id` — custody timeline for a paper
-- `GET /alerts`, `GET /alerts/:id` — list/filter (`status`, `severity`, `paperId`)
-- `POST /alerts/:id/acknowledge`, `POST /alerts/:id/resolve` (ADMIN/BOARD/AUDITOR)
-- `GET /dashboard/summary`
+- All routes under `/api/v1`; auth via `Authorization: Bearer <accessToken>`.
+- Roles: `ADMIN`, `BOARD`, `COURIER`, `CENTER`, `INVIGILATOR`, `AUDITOR` —
+  what each is for: [`docs/security.md#roles`](docs/security.md#roles).
+- Custody moves one step at a time, each gated to specific roles
+  (`src/papers/custody.js`):
 
-## Custody state machine
+  ```
+  CREATED → HANDOVER_TO_COURIER → ARRIVED_AT_CENTER → STORED_IN_VAULT
+          → HANDOVER_TO_EXAM_HALL → OPENED_FOR_EXAM → COMPLETED
+  ```
 
-```
-CREATED → HANDOVER_TO_COURIER → ARRIVED_AT_CENTER → STORED_IN_VAULT
-        → HANDOVER_TO_EXAM_HALL → OPENED_FOR_EXAM → COMPLETED
-```
-
-Each transition is gated to specific roles (see `src/papers/custody.js`).
-Skipped, reordered, or wrong-role transitions are rejected (409) but still
-written to `TrackingLog` (`accepted: false`) and to the audit log. The
-`HANDOVER_TO_EXAM_HALL → OPENED_FOR_EXAM` transition additionally enforces
-`now >= examTime` **regardless of which endpoint performs it** — both
-`/tracking/scan` and `/papers/:id/decrypt` share this check (see "Fixed in
-Phase 2" below).
-
-## Time-lock
-
-`POST /papers/:id/decrypt` and `POST /papers/:id/print` enforce, independently:
-
-1. A window around `examTime`: `now` must be within
-   `[examTime - ALLOWED_PRE_WINDOW_MINUTES, examTime + ALLOWED_POST_WINDOW_MINUTES]`.
-2. If the paper is still at `HANDOVER_TO_EXAM_HALL`, the stricter rule from
-   the spec: `now >= examTime` exactly (no early opening even inside the
-   pre-window) before it will auto-transition the paper to `OPENED_FOR_EXAM`.
-3. Role authorization (`INVIGILATOR` or `ADMIN`).
-4. Custody state — must be `HANDOVER_TO_EXAM_HALL` or already `OPENED_FOR_EXAM`.
-
-Every attempt — success or denial — is written to the audit log and scored
-by the anomaly engine.
-
-## Security module (`src/security/`)
-
-- **`jwt-auth.js`** — single source of truth for signing/verifying access
-  and refresh tokens. Algorithm pinned to HS256 on every verify call (an
-  `alg: none` or wrong-algorithm token is rejected outright). Revocation is
-  by `tokenVersion`, not a blacklist — logout/deactivation bump a counter
-  that invalidates every outstanding token for that user at once.
-- **`rate-limit.js`** — baseline global limiter (300 req/15min/IP) plus
-  route-specific limiters: `authLimiter` (10/15min on `/auth/login` and
-  ADMIN-gated `/auth/register`), `sensitiveActionLimiter` (20/15min on
-  `/papers/:id/decrypt` and `/print`), `adminLimiter` (60/15min on
-  `/users/*`). All in-memory; the file documents the exact swap to a
-  Redis-backed store for multi-instance deployment.
-- **`input-validation.js`** — the Zod `validate()` middleware (every schema
-  uses `.strict()`, rejecting unrecognized fields) plus `jsonBodyParser()`.
-  Body size limits are per-router: 10kb everywhere except the papers router
-  (2mb, since paper content itself lives in that body — see "Fixed in Phase
-  2": a single global 10kb limit in Phase 1 would have silently rejected
-  real paper uploads).
-- **`headers.js`** — Helmet with its default security headers.
-- **`cors.js`** — explicit origin allowlist (`ALLOWED_ORIGINS`), never `*`,
-  `credentials: true`.
-- **Key rotation** — see below.
-- **Logging** — `logs/logger.js` adds a custom `security` pino level
-  (between `warn` and `error`) used for rejected tokens, CORS denials,
-  rate-limit trips, role-authorization failures, and fired anomaly alerts.
-  Passwords, tokens, and ciphertext are redacted from all logs.
+  Skipped, reordered, or wrong-role transitions are rejected (409) but
+  still written to `TrackingLog` and the audit log — full mechanics in
+  [`docs/flow.md#custody-scan--transition`](docs/flow.md#custody-scan--transition).
 
 ## Key rotation
 
@@ -202,96 +188,27 @@ On first boot, `ensureActiveKeyVersion()` registers a `KeyVersion` for
 whatever `ACTIVE_PAPER_KEY_ID` is already set to, so rotation history starts
 from a real record instead of a gap.
 
-## Anomaly / risk engine (`src/anomaly/`)
+## Security, anomaly detection, and the audit log
 
-`evaluateEvent(event, context)` (pure, unit-tested in `test/anomaly.test.js`)
-runs every rule's `condition(event, context)`, sums the weights of whichever
-fired, and classifies the total: **≥3 → WARNING**, **≥6 → CRITICAL**
-(`src/anomaly/config.js` — tunable without touching rule logic). Rules:
+Full detail (roles, encryption, rate limiting, the audit hash chain,
+Phase 5's hardening fixes, and every known limitation carried forward from
+Phases 1–4): [`docs/security.md`](docs/security.md). How the anomaly
+engine actually scores events and how the hash chain is verified:
+[`docs/flow.md`](docs/flow.md) and [`docs/security.md`](docs/security.md#audit-log).
 
-| Rule | Weight | Fires when |
-|---|---|---|
-| `R_TIME_WINDOW` | 4 | Decrypt/print denied for being outside the examTime access window |
-| `R_FAILED_DECRYPT` | 3 | ≥2 failed decrypt/print attempts by the same actor on the same paper in 15 min |
-| `R_SKIP_STEP` | 5 | A custody scan skips/reorders the state machine |
-| `R_UNEXPECTED_ROLE` | 4 | A scan/decrypt/print attempted by a role not authorized for that step |
-| `R_LOCATION_MISMATCH` | 3 | Scan location doesn't match any of the paper's assigned centers |
-| `R_TOO_EARLY_SCAN` | 5 | A scan attempts `OPENED_FOR_EXAM` before `examTime` |
-| `R_REPEATED_LOGIN_FAILURE` | 3 | ≥3 failed logins for the same account in 15 min — added beyond the spec's six, since none of the required six ever fire on a `LOGIN` event |
+## Build history
 
-`anomaly.service.js` (`recordEvent`) is the actual entry point called from
-`auth.service.login`, `papers.service.accessPaperContent`, and
-`tracking.service.recordScan` — it assembles DB-backed `context` (recent
-failure counts, expected locations), calls the pure engine, and persists an
-`Alert` when the score crosses WARNING. It fails open: an anomaly-evaluation
-bug never blocks the request it's observing, since the actual allow/deny
-decision (role/time-lock/custody checks) already happened before this runs.
-
-CRITICAL alerts are logged at the `security` level as "notify higher
-authority" — see Known Limitations below for what that doesn't yet do.
-
-## Audit log
-
-Append-only, hash-chained: each entry's `currentHash = SHA256(prevHash +
-payload + timestamp)`. Writes are serialized by an in-process mutex to
-prevent the chain forking under concurrent requests within one server
-instance. `npm run verify:chain` recomputes the whole chain from genesis and
-reports the first break, if any.
-
-## Fixed in Phase 2 (real issues found while building this phase, not just planned hardening)
-
-- **Custody-scan time-lock bypass**: `POST /tracking/scan` could previously
-  advance a paper straight to `OPENED_FOR_EXAM` before `examTime` — only the
-  `/decrypt` endpoint enforced the time floor. Fixed in
-  `tracking.service.js` to apply the same `assertExamTimeReached` check.
-- **Paper-content body-size bug**: Phase 1's single global 10kb JSON body
-  limit would have rejected any real paper submission over 10kb, despite
-  `papers.validation.js` allowing content up to 2MB. Fixed by moving body
-  limits to per-router configuration (`security/input-validation.js`).
-- **Audit hash-chain false break**: Mongoose's default `minimize: true`
-  stripped empty `metadata: {}` objects before saving, so entries like
-  `LOGOUT` (empty metadata) diverged from what was hashed at write time —
-  `verifyHashChain.js` reported a false tamper break. Fixed by setting
-  `minimize: false` on `AuditLog`'s schema.
-
-## Testing the flow manually
-
-```bash
-# 1. seed admin, login, register a BOARD/COURIER/CENTER/INVIGILATOR user each
-# 2. as BOARD: POST /papers with content + examTime
-# 3. as BOARD/COURIER/CENTER: POST /tracking/scan through each custody step
-#    using the qrToken returned on the paper
-# 4. as INVIGILATOR, at/after examTime: POST /papers/:id/decrypt
-# 5. GET /alerts to see anything the anomaly engine flagged along the way
-# 6. npm run verify:chain
-```
+Each phase's Word doc (`outputs/`) documents what was built, why, the
+reasoning behind significant decisions, and every real bug found and fixed
+while building it — not just a changelog. Phase 5's fixes (a login timing
+side-channel, a refresh/access token confusion hardening, and a
+production-seeding guard) are documented in
+[`docs/security.md`](docs/security.md#this-phases-hardening-fixes) since
+they're security fixes, not new features.
 
 ## Known limitations
 
-- **No paging/notification integration**: CRITICAL alerts are logged at the
-  `security` level ("notify higher authority" per the spec) but nothing
-  pages, emails, or SMSes anyone yet — that integration point is deferred.
-- **Token revocation is per-user, not per-token**: `tokenVersion` revokes
-  every session for a user at once; a stolen single token can't be revoked
-  in isolation without also logging out that user's other sessions. A
-  blacklist would need TTL-matched storage (Redis) to avoid growing
-  unbounded — more infrastructure than this MVP's short-lived (20min)
-  access tokens need yet.
-- **Rate limiting is in-memory, single-instance**: documented swap to a
-  Redis-backed store (`rate-limit-redis`) for horizontal scaling, not
-  implemented — no Redis dependency added for this MVP.
-- **Alert.centerId is best-effort**: derived from the acting user's own
-  center or the paper's first assigned center, not a guaranteed-accurate
-  "this happened at this center" fact — a paper can be assigned to multiple
-  centers. Good enough for CENTER-role alert-list filtering; not
-  authoritative for anything downstream.
-- **Anomaly config is file-based, not DB-backed**: rule weights/thresholds
-  live in `src/anomaly/config.js` — tunable without touching rule logic, but
-  still requires an edit + redeploy, not a live admin-panel toggle.
-- **Audit hash-chain write serialization is in-process only** — a
-  multi-instance deployment can still fork the chain under concurrent
-  writes across instances. This is a hash chain, not a blockchain: it
-  detects tampering but has no independent distributed consensus.
-- **`examTime` checks are server-clock based**, not a cryptographic
-  time-lock puzzle — flagged as future work (TLPs / HSM-backed release) in
-  later phases.
+The consolidated, current list lives in
+[`docs/security.md#known-limitations-carried-forward`](docs/security.md#known-limitations-carried-forward)
+so it has one source of truth instead of drifting across four separate
+READMEs.

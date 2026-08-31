@@ -85,6 +85,10 @@ async function recordEvent(event) {
         deviceId: event.deviceId,
         ip: event.ip,
         failureCode: event.failureCode,
+        syncDelayMinutes:
+          typeof event.syncDelayMs === 'number' && event.syncDelayMs > 0
+            ? Math.round(event.syncDelayMs / 60000)
+            : undefined,
       },
     });
 

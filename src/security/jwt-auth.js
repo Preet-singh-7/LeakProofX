@@ -39,9 +39,21 @@ function issueTokenPair(user) {
   return { accessToken: signAccessToken(user), refreshToken: signRefreshToken(user) };
 }
 
-/** Throws (jsonwebtoken's JsonWebTokenError/TokenExpiredError) on any failure — callers decide the HTTP shape. */
+/**
+ * Throws (jsonwebtoken's JsonWebTokenError/TokenExpiredError) on any failure
+ * — callers decide the HTTP shape. Also rejects a well-formed refresh token
+ * outright (payload.type === 'refresh'): access and refresh tokens are
+ * signed with different secrets so this never fires in a correctly
+ * configured deployment, but if an operator ever sets JWT_ACCESS_SECRET and
+ * JWT_REFRESH_SECRET to the same value, this stops a longer-lived (7d)
+ * refresh token from also working as a 20m access token.
+ */
 function verifyAccessToken(token) {
-  return jwt.verify(token, env.jwt.accessSecret, { algorithms: [ALGORITHM] });
+  const payload = jwt.verify(token, env.jwt.accessSecret, { algorithms: [ALGORITHM] });
+  if (payload.type === 'refresh') {
+    throw new Error('Refresh token presented where an access token was expected');
+  }
+  return payload;
 }
 
 function verifyRefreshToken(token) {

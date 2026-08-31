@@ -73,6 +73,12 @@ async function recordScan(input, actor) {
 
   const centerId = actor.centerId || paper.assignedCenterIds?.[0] || null;
 
+  // How long between when this scan claims to have happened (the mobile
+  // scanner's clientTimestamp, preserved through an offline-queue sync) and
+  // when the server actually received it. 0 for an online scan with no
+  // clientTimestamp — there's nothing to be delayed relative to.
+  const syncDelayMs = input.clientTimestamp ? timestamp.getTime() - new Date(input.clientTimestamp).getTime() : 0;
+
   const anomalyEvent = {
     type: 'SCAN',
     success: check.allowed,
@@ -87,6 +93,7 @@ async function recordScan(input, actor) {
     location: input.location,
     deviceId: input.deviceId,
     failureCode: check.allowed ? undefined : check.code,
+    syncDelayMs,
   };
 
   if (!check.allowed) {

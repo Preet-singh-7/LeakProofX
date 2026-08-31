@@ -7,6 +7,14 @@ const anomalyService = require('../anomaly/anomaly.service');
 
 const SALT_ROUNDS = 12;
 
+// Precomputed bcrypt hash of a value nobody will ever type. login() compares
+// against this whenever the account doesn't exist, so a nonexistent/inactive
+// email still pays the same bcrypt cost as a real wrong-password attempt —
+// without it, an early return for "no such user" is measurably faster than
+// the wrong-password path, letting an attacker enumerate valid emails by
+// response latency alone.
+const DUMMY_HASH = bcrypt.hashSync('leakproofx-dummy-password-for-timing', SALT_ROUNDS);
+
 async function register({ name, email, password, role, centerId }, actor) {
   const existing = await User.findOne({ email }).lean();
   if (existing) {
@@ -30,11 +38,15 @@ async function register({ name, email, password, role, centerId }, actor) {
 
 async function login({ email, password }, context) {
   const user = await User.findOne({ email }).select('+passwordHash');
+  // Always compare against something — a real hash if the user exists, the
+  // dummy one otherwise — so this call takes the same time either way (see
+  // DUMMY_HASH above).
+  const valid = await bcrypt.compare(password, user?.passwordHash || DUMMY_HASH);
+
   if (!user || !user.isActive) {
     throw new ApiError(401, 'Invalid credentials');
   }
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
     await appendAuditLog({
       actorUserId: user._id,

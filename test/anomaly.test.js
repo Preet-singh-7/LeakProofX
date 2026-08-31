@@ -104,6 +104,22 @@ test('R_REPEATED_LOGIN_FAILURE requires at least 3 recent failures', () => {
   assert.ok(atThreshold.firedRules.includes('R_REPEATED_LOGIN_FAILURE'));
 });
 
+test('R_SYNC_DELAY fires only when the sync gap exceeds the configured threshold', () => {
+  const { SYNC_DELAY_THRESHOLD_MINUTES } = require('../src/anomaly/config');
+  const thresholdMs = SYNC_DELAY_THRESHOLD_MINUTES * 60 * 1000;
+
+  const withinThreshold = evaluateEvent({ type: 'SCAN', success: true, syncDelayMs: thresholdMs - 1 });
+  assert.ok(!withinThreshold.firedRules.includes('R_SYNC_DELAY'));
+
+  const overThreshold = evaluateEvent({ type: 'SCAN', success: true, syncDelayMs: thresholdMs + 1 });
+  assert.ok(overThreshold.firedRules.includes('R_SYNC_DELAY'));
+
+  // A same-instant online scan (syncDelayMs: 0, the tracking.service.js
+  // default when there's no clientTimestamp) must never fire this.
+  const noDelay = evaluateEvent({ type: 'SCAN', success: true, syncDelayMs: 0 });
+  assert.ok(!noDelay.firedRules.includes('R_SYNC_DELAY'));
+});
+
 test('combining two mid-severity rules crosses into CRITICAL', () => {
   // SKIP_STEP (5) alone is WARNING; combined with a too-early open attempt
   // (5) on the same scan, the total (10) crosses the CRITICAL threshold (6).

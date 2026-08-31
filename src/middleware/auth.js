@@ -36,6 +36,7 @@ const requireAuth = asyncHandler(async (req, res, next) => {
 
   req.user = {
     id: String(user._id),
+    name: user.name,
     role: user.role,
     email: user.email,
     centerId: user.centerId ? String(user.centerId) : null,

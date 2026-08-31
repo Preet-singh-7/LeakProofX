@@ -10,6 +10,19 @@ const { ROLES } = require('../src/config/constants');
 const { appendAuditLog } = require('../src/logs/audit.service');
 
 async function main() {
+  // env.seedAdmin.password falls back to a hardcoded default
+  // ("ChangeMe123!", documented in the README) when SEED_ADMIN_PASSWORD
+  // isn't set — fine for local development, but seeding a production
+  // database with a publicly-documented default admin password is a real
+  // credential-based vulnerability, not a hypothetical one. Refuse outright
+  // rather than silently doing it.
+  if (env.nodeEnv === 'production' && !process.env.SEED_ADMIN_PASSWORD) {
+    throw new Error(
+      'Refusing to seed an admin user in production without an explicit SEED_ADMIN_PASSWORD ' +
+        '— the fallback default is publicly documented and must not be used outside development.'
+    );
+  }
+
   await mongoose.connect(env.mongoUri);
 
   const existing = await User.findOne({ email: env.seedAdmin.email });
