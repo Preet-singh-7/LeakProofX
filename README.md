@@ -1,78 +1,97 @@
 # LeakProofX
 
-An exam-paper custody, encryption, and leak-prevention platform, built in
-five phases: a Node/Express backend (Phases 1–2), a React dashboard
-(`web/`, Phase 3), a React Native/Expo scanner app (`mobile/`, Phase 4),
-and this final consolidation/hardening pass (Phase 5).
+[![CI](https://github.com/Preet-singh-7/LeakProofX/actions/workflows/ci.yml/badge.svg)](https://github.com/Preet-singh-7/LeakProofX/actions/workflows/ci.yml)
+
+An exam-paper custody, encryption, and leak-prevention platform: a
+Node/Express backend, a React web dashboard, and a React Native mobile
+scanner app, sharing one authoritative API.
 
 The idea in one sentence: a paper is encrypted the moment it's created,
 carries a signed QR code through a fixed, role-gated custody chain from
 board to courier to exam center to invigilator, every step (accepted or
-rejected) is written to a tamper-evident audit trail, and an anomaly
-engine scores anything that looks wrong along the way.
+rejected) is written to a tamper-evident audit trail, and a rule-based
+anomaly engine scores anything that looks wrong along the way.
 
-## Where things are documented
+This file is the whole project's front door. Each component also has its
+own README with the detail specific to it — this one is where you start.
 
-This README covers running the backend. Deeper documentation lives in
-`docs/`:
+## The three components
+
+| | What it is | Who uses it | Setup |
+|---|---|---|---|
+| **Backend** (`src/`) | Node/Express API — auth, encryption, custody state machine, anomaly engine, audit log | Everything below talks to this | [Backend setup](#backend-setup) |
+| **Web dashboard** (`web/`) | React + Vite + Tailwind | Admins, board officers, auditors, center staff — monitoring and administration | [`web/README.md`](web/README.md) |
+| **Mobile scanner** (`mobile/`) | React Native (Expo), iOS-verified on physical hardware | Couriers, center staff, invigilators — the people physically handling the paper | [`mobile/README.md`](mobile/README.md) |
+
+All three share one backend, one auth contract (JWT access + refresh
+tokens), and one source of truth for what's actually allowed to happen to
+a paper — neither client has its own copy of the custody-authorization
+rules; they just show you what the server decided. See
+[`docs/architecture.md`](docs/architecture.md) for how the pieces connect.
+
+## Repo layout
+
+```
+src/, scripts/, test/   backend — this README's "Backend setup" section
+web/                    React dashboard — web/README.md
+mobile/                 React Native/Expo scanner app — mobile/README.md
+docs/                   architecture / api / flow / security / security-testing / demo-script
+outputs/                Phase-by-phase build history (Word docs)
+.github/workflows/      CI — runs on every push/PR to main
+```
+
+## Documentation map
 
 | Doc | What's in it |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | The three components, how they fit together, the data model |
 | [`docs/api.md`](docs/api.md) | Every endpoint — method, role gate, request/response shape |
 | [`docs/flow.md`](docs/flow.md) | How auth, custody transitions, anomaly scoring, and mobile offline sync actually work end to end |
-| [`docs/security.md`](docs/security.md) | The full security model, including Phase 5's hardening fixes |
+| [`docs/security.md`](docs/security.md) | The full security model, including every hardening fix made and how it was verified |
+| [`docs/security-testing.md`](docs/security-testing.md) | An adversarial testing pass — real attacks run against the running system, with results confirmed against database state |
 | [`docs/demo-script.md`](docs/demo-script.md) | A runnable, live-verified 5-minute walkthrough of the whole system |
+| [`outputs/`](outputs/) | Phase 1–4 Word docs: what was built, why, and every real bug found and fixed along the way |
 
-Component-specific setup: [`web/README.md`](web/README.md),
-[`mobile/README.md`](mobile/README.md). Phase-by-phase build history (what
-was built, why, and every real bug found and fixed along the way):
-[`outputs/`](outputs/) (Word docs, Phases 1–4).
+## Quickstart — running all three together
 
-## Repo layout
+```bash
+# 1. Backend
+cp .env.example .env   # fill in secrets, see "Backend setup" below
+npm install
+npm run seed:admin
+npm run dev             # http://localhost:4007
 
-```
-src/, scripts/, test/   backend (this README)
-web/                    React dashboard — see web/README.md
-mobile/                 React Native/Expo scanner app — see mobile/README.md
-docs/                   architecture / api / flow / security / demo script
-outputs/                Phase N Word documentation
-```
+# 2. Web dashboard (separate terminal)
+cd web
+cp .env.example .env    # point VITE_API_BASE_URL at the backend above
+npm install
+npm run dev              # http://localhost:5173
 
-## Stack
-
-Node.js (LTS) + Express, MongoDB + Mongoose, JWT auth, AES-256-GCM content
-encryption, SHA-256 hash-chained audit log, Zod validation, Helmet + CORS,
-express-rate-limit, pino structured logging (with a custom `security` level).
-
-## Project layout
-
-```
-src/
-  auth/          register/login/refresh/logout, JWT issuance
-  users/         admin-gated user management
-  papers/        paper CRUD, encryption, QR issuance, time-locked decrypt/print,
-                 custody state machine (custody.js)
-  tracking/      custody scan events, per-paper timeline
-  encryption/    AES-256-GCM encrypt/decrypt, key manager, startup key bookkeeping
-  alerts/        Alert model + list/filter/acknowledge/resolve API
-  anomaly/       rule-based risk engine (rules, config, evaluateEvent, anomaly.service)
-  logs/          pino logger, hash-chained audit log service
-  dashboard/     summary metrics endpoint
-  security/      jwt-auth, rate-limit, input-validation, headers, cors
-  middleware/    auth guards, error handling, async wrapper
-  models/        Mongoose schemas for all core entities
-  config/        env loading, constants, db connection
-scripts/
-  seedAdmin.js       creates the first ADMIN user (refuses a default password in production — see docs/security.md)
-  verifyHashChain.js recomputes and verifies the audit log hash chain (--json, --help — see below)
-  rotateKey.js       records a paper-encryption key rotation (see "Key rotation")
-test/
-  anomaly.test.js    unit tests for every anomaly rule
-  security.test.js   integration tests for rate-limit/CORS/validation/JWT controls
+# 3. Mobile scanner (separate terminal) — needs a real device or Simulator + Xcode
+cd mobile
+cp .env.example .env     # point EXPO_PUBLIC_API_BASE_URL at the backend
+npm install
+npx expo run:ios
 ```
 
-## Setup
+Log in with whatever you seeded (`SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`,
+defaults `admin@leakproofx.local` / `ChangeMe123!` in development). For a
+guided tour instead of poking around cold, run
+[`docs/demo-script.md`](docs/demo-script.md) — it walks a paper through
+the whole custody chain, triggers a deliberate rejection, and verifies the
+audit trail, using nothing but `curl`.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR to `main`: the full test
+suite (`npm test`, no database needed), then a real MongoDB service
+container seeded with one genuine audit entry (`npm run seed:admin`) so
+the hash-chain verifier (`node scripts/verifyHashChain.js --json`)
+exercises actual chain recomputation rather than trivially passing on an
+empty database — see the comment in the workflow file for the full
+reasoning.
+
+## Backend setup
 
 1. Copy the env template and fill in real secrets (never commit `.env`):
 
@@ -117,7 +136,7 @@ test/
    npm run seed:admin
    ```
 
-   In production, this now refuses to run unless `SEED_ADMIN_PASSWORD` is
+   In production, this refuses to run unless `SEED_ADMIN_PASSWORD` is
    explicitly set — see [`docs/security.md`](docs/security.md#seeding-the-first-admin).
 
 5. Verify the audit hash chain at any time:
@@ -134,15 +153,34 @@ test/
    npm test
    ```
 
-7. Walk through the whole system live — custody chain, a deliberate
-   rejection, the alert it raises, time-locked decrypt, hash-chain
-   verification:
+### Backend project layout
 
-   ```bash
-   # see docs/demo-script.md for the full, copy-pasteable script
-   ```
+```
+src/
+  auth/          register/login/refresh/logout, JWT issuance
+  users/         admin-gated user management
+  papers/        paper CRUD, encryption, QR issuance, time-locked decrypt/print,
+                 custody state machine (custody.js)
+  tracking/      custody scan events, per-paper timeline
+  encryption/    AES-256-GCM encrypt/decrypt, key manager, startup key bookkeeping
+  alerts/        Alert model + list/filter/acknowledge/resolve API
+  anomaly/       rule-based risk engine (rules, config, evaluateEvent, anomaly.service)
+  logs/          pino logger, hash-chained audit log service
+  dashboard/     summary metrics endpoint
+  security/      jwt-auth, rate-limit, input-validation, headers, cors
+  middleware/    auth guards, error handling, async wrapper
+  models/        Mongoose schemas for all core entities
+  config/        env loading, constants, db connection
+scripts/
+  seedAdmin.js       creates the first ADMIN user (refuses a default password in production)
+  verifyHashChain.js recomputes and verifies the audit log hash chain (--json, --help)
+  rotateKey.js       records a paper-encryption key rotation (see "Key rotation")
+test/
+  anomaly.test.js    unit tests for every anomaly rule
+  security.test.js   integration tests for rate-limit/CORS/validation/JWT controls
+```
 
-## Environment variables
+### Environment variables
 
 See [.env.example](.env.example) for the full list with inline comments:
 server/DB config, JWT secrets and TTLs, QR signing secret, per-key-id
@@ -190,21 +228,24 @@ from a real record instead of a gap.
 
 ## Security, anomaly detection, and the audit log
 
-Full detail (roles, encryption, rate limiting, the audit hash chain,
-Phase 5's hardening fixes, and every known limitation carried forward from
-Phases 1–4): [`docs/security.md`](docs/security.md). How the anomaly
-engine actually scores events and how the hash chain is verified:
-[`docs/flow.md`](docs/flow.md) and [`docs/security.md`](docs/security.md#audit-log).
+Full detail (roles, encryption, rate limiting, the audit hash chain, every
+hardening fix made and how each was verified, and every known limitation
+carried forward): [`docs/security.md`](docs/security.md). Real attacks run
+against the live system, including a genuine race condition found and
+fixed: [`docs/security-testing.md`](docs/security-testing.md). How the
+anomaly engine actually scores events and how the hash chain is verified:
+[`docs/flow.md`](docs/flow.md).
 
 ## Build history
 
 Each phase's Word doc (`outputs/`) documents what was built, why, the
 reasoning behind significant decisions, and every real bug found and fixed
-while building it — not just a changelog. Phase 5's fixes (a login timing
-side-channel, a refresh/access token confusion hardening, and a
-production-seeding guard) are documented in
-[`docs/security.md`](docs/security.md#this-phases-hardening-fixes) since
-they're security fixes, not new features.
+while building it — not just a changelog. Every security fix made after
+the initial build (timing side-channels, token confusion, a production
+seeding guard, an unlogged QR-forgery path, and a concurrency race) is
+documented in [`docs/security.md`](docs/security.md#this-phases-hardening-fixes)
+and [`docs/security-testing.md`](docs/security-testing.md) instead, since
+those are fixes to what exists, not new features.
 
 ## Known limitations
 

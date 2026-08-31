@@ -74,7 +74,7 @@ async function getQrImage(id) {
  * event than an on-screen decrypt.
  */
 async function accessPaperContent(id, actor, { action, location, deviceId }) {
-  const paper = await getPaperById(id);
+  let paper = await getPaperById(id);
   const now = new Date();
   const eventType = action.startsWith('PAPER_DECRYPTED') ? 'DECRYPT' : 'PRINT';
   // Best-effort scoping for Alert.centerId: prefer the acting user's own
@@ -98,22 +98,57 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
       }
       assertExamTimeReached(paper.examTime, now);
 
-      paper.currentCustodyStep = CUSTODY_STEPS.OPENED_FOR_EXAM;
-      paper.status = PAPER_STATUS.OPENED;
-      await paper.save();
+      // Atomic, guarded update — the filter re-checks currentCustodyStep at
+      // write time, not just what we read at the top of this function.
+      // Concurrent requests that all read HANDOVER_TO_EXAM_HALL before any
+      // of them wrote would previously all pass the check above and all
+      // call paper.save(), each independently writing its own TrackingLog
+      // entry for what should be a single, one-time transition (a real
+      // TOCTOU race, found and confirmed live: 8 concurrent decrypt
+      // requests produced 3 duplicate OPENED_FOR_EXAM transitions — see
+      // docs/security.md). MongoDB resolves a single-document update
+      // atomically, so putting the guard condition in the filter itself
+      // means exactly one concurrent caller's update actually matches;
+      // every other caller gets `updated === null` back.
+      const updated = await Paper.findOneAndUpdate(
+        { _id: paper._id, currentCustodyStep: CUSTODY_STEPS.HANDOVER_TO_EXAM_HALL },
+        { $set: { currentCustodyStep: CUSTODY_STEPS.OPENED_FOR_EXAM, status: PAPER_STATUS.OPENED } },
+        { new: true }
+      );
 
-      await TrackingLog.create({
-        paperId: paper._id,
-        fromStep: CUSTODY_STEPS.HANDOVER_TO_EXAM_HALL,
-        toStep: CUSTODY_STEPS.OPENED_FOR_EXAM,
-        userId: actor.id,
-        roleId: actor.role,
-        location: location || null,
-        deviceId: deviceId || null,
-        timestamp: now,
-        syncedAt: now,
-        accepted: true,
-      });
+      if (updated) {
+        // This call won the race — it's the one true transition. Record
+        // exactly one TrackingLog entry for it.
+        paper = updated;
+        await TrackingLog.create({
+          paperId: paper._id,
+          fromStep: CUSTODY_STEPS.HANDOVER_TO_EXAM_HALL,
+          toStep: CUSTODY_STEPS.OPENED_FOR_EXAM,
+          userId: actor.id,
+          roleId: actor.role,
+          location: location || null,
+          deviceId: deviceId || null,
+          timestamp: now,
+          syncedAt: now,
+          accepted: true,
+        });
+      } else {
+        // Someone else's concurrent request already made this exact
+        // transition between our read and our write attempt. Re-fetch so
+        // the rest of this function acts on the paper's real current
+        // state instead of the stale in-memory copy from the top of this
+        // function — the content is still legitimately readable (the
+        // transition happened, just not because of this particular call).
+        paper = await getPaperById(id);
+        if (paper.currentCustodyStep !== CUSTODY_STEPS.OPENED_FOR_EXAM) {
+          throw new ApiError(
+            409,
+            `Paper is in custody state ${paper.currentCustodyStep} and cannot be accessed for content`,
+            undefined,
+            'CUSTODY_STATE'
+          );
+        }
+      }
     } else if (paper.currentCustodyStep !== CUSTODY_STEPS.OPENED_FOR_EXAM) {
       throw new ApiError(
         409,

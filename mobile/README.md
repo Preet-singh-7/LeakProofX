@@ -67,17 +67,21 @@ trip it; a scan that surfaces hours or days late will.
 
 ## Known limitations
 
-- **iOS only, built and tested on this Simulator** — Android
-  (`expo run:android`) uses the same code path (Expo's cross-platform
-  camera/storage APIs) but wasn't built or run in this environment.
-- **No physical camera on the iOS Simulator**: `expo-camera`'s barcode
-  scanner never actually fires there — verified separately: real backend
-  connectivity, login, navigation, and the full offline-queue/sync pipeline
-  were exercised live in the Simulator; the "point camera at code → decode"
-  step was verified by code review of `decodeQrPayload()` against a real
-  signed QR token and is the one piece that needs a physical device to see
-  end-to-end. This is a standard limitation of testing camera features on
-  Simulator, not something skipped for convenience.
+- **iOS only** — Android (`expo run:android`) uses the same code path
+  (Expo's cross-platform camera/storage APIs) but wasn't built or run in
+  this environment.
+- **Physical-device camera scanning: verified.** The Simulator has no
+  camera hardware, so `expo-camera`'s barcode scanner was first exercised
+  end-to-end on a real iPhone — logged in, scanned a live signed QR code
+  with the actual camera, submitted a real custody transition, and
+  confirmed the result against the database (not just the app's own
+  success message). A second scan at the same step was correctly rejected
+  server-side, confirming the anti-replay sequencing rule holds via the
+  real camera path too, not only in unit tests. See the Phase 4 Word doc
+  (`../outputs/`) for the physical-device build/signing issues hit and
+  fixed along the way (device-ID format mismatches between Apple's own
+  tooling, per-rebuild developer-trust resets, and a Debug-build Metro
+  dependency issue resolved by building Release instead).
 - **No suggested "next step"**: unlike the web dashboard (which can fetch a
   paper's current custody state), the scan form presents every possible step
   as a manual choice — deliberately, so the app works fully offline without

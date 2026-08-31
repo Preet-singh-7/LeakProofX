@@ -118,6 +118,67 @@ the password is unset in production, proceeds normally otherwise (and
 unaffected in development, where the fallback remains intentional for
 quick local setup).
 
+### Addendum — found via adversarial testing
+
+Two more real issues, found by actually attacking the running system
+rather than reading the code for bugs (full attack transcripts, exact
+requests, and DB verification for all three tests attempted — including
+the one that didn't find anything — in
+[`security-testing.md`](security-testing.md)).
+
+### Forged QR tokens were invisible to the audit trail
+
+**Before:** `POST /tracking/scan` verifies the QR token's signature
+(`verifyQrToken()`, `src/papers/qr.js`) before looking up any paper. A
+forged token — signed with a guessed secret instead of the real
+`QR_SIGNING_SECRET` — was correctly rejected with `400 Invalid or
+unrecognized QR token`, before any custody logic ran. But that rejection
+threw straight out of `verifyQrToken()`, before `tracking.service.js`'s own
+`AuditLog`/`TrackingLog`/anomaly-engine calls were ever reached. Confirmed
+live: a forged-token attempt left zero new entries in `TrackingLog`,
+`AuditLog`, or `Alert` — only a generic `WARN`-level `"request error"` line
+indistinguishable from any other malformed request, not the dedicated
+`security` log level every other rejection in this system uses (role
+rejections, rate-limit trips, CORS denials, revoked tokens). An attacker
+probing for the signing secret, or replaying a guessed token, would leave
+no trace an operator or the anomaly engine would ever see.
+
+**Fix:** `tracking.service.js`'s `recordScan()` now catches a failed
+`verifyQrToken()`, writes an `AuditLog` entry (`QR_TOKEN_REJECTED`, actor
+captured, no `targetId` since the token's claimed paper was never
+verified), and logs at the `security` level — before re-throwing the same
+400 the caller already saw. The caller-facing behavior is unchanged;
+only server-side visibility improved. Re-verified with the identical
+forged token: the `AuditLog` entry and security-level log line both now
+appear.
+
+### A duplicate custody-transition race at the exam-time boundary (TOCTOU)
+
+**Before:** `papers.service.js`'s `accessPaperContent()` (backing
+`POST /papers/:id/decrypt` and `/print`) read a paper, checked
+`currentCustodyStep === HANDOVER_TO_EXAM_HALL` in application memory, and
+only *then* wrote `currentCustodyStep = OPENED_FOR_EXAM` via
+`paper.save()` — a read-then-write pattern with no atomicity between the
+check and the write. Confirmed live: 8 genuinely concurrent (`Promise.all`,
+not sequential) decrypt requests at the exam-time boundary produced **3
+duplicate `HANDOVER_TO_EXAM_HALL → OPENED_FOR_EXAM` `TrackingLog` entries**
+for what should be a single, one-time transition — three separate requests
+all read the paper before any of their writes landed, and all three passed
+the in-memory check and wrote their own transition.
+
+**Fix:** replaced the read-then-write with an atomic, guarded
+`Paper.findOneAndUpdate({ _id, currentCustodyStep: HANDOVER_TO_EXAM_HALL }, { $set: {...} }, { new: true })`
+— the custody-state guard now lives in the same database operation as the
+write, not a separate in-memory check beforehand. MongoDB resolves a
+single-document update atomically, so under concurrent requests exactly
+one caller's update matches and gets a result back; every other caller
+gets `null`, re-fetches the paper's real current state, and (since it's
+now legitimately `OPENED_FOR_EXAM`) proceeds to read content without
+writing a second transition. No lock or mutex — the database itself
+arbitrates. Re-verified with the identical 8-concurrent-request attack:
+all 8 still succeed (access for legitimately authorized requesters is
+unaffected), but exactly 1 transition is now recorded instead of 3.
+
 ## Content encryption
 
 Paper content is AES-256-GCM encrypted (`src/encryption/crypto.js`)

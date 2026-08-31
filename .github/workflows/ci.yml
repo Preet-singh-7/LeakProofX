@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # DB decision for this workflow (documented here, not silently made):
+    #
+    # `npm test` needs no live database at all — every test in test/ is a
+    # pure unit test or an integration test against a small in-memory Express
+    # app (see the file-header comments in test/anomaly.test.js and
+    # test/security.test.js). test/security.test.js even sets a placeholder
+    # MONGODB_URI specifically because it's never connected to.
+    #
+    # scripts/verifyHashChain.js is different: it calls mongoose.connect()
+    # and then AuditLog.find() (src/logs/audit.service.js's verifyChain()).
+    # Run against a genuinely empty database, it would still "pass" —
+    # zero entries means the loop never executes and it trivially returns
+    # { valid: true, entriesChecked: 0 } — but that's a vacuous pass that
+    # never actually exercises the SHA-256 recomputation logic. A real
+    # regression in computeHash()'s canonical JSON serialization, for
+    # example, would sail through an empty-DB check undetected.
+    #
+    # So this job runs a real MongoDB service container and seeds exactly
+    # one real audit log entry the same way a fresh deployment would:
+    # `npm run seed:admin`, which calls the actual appendAuditLog() (not
+    # CI-only fixture code) to write an ADMIN_SEEDED entry. verify:chain
+    # then recomputes and checks that one real link from genesis — a
+    # minimal but genuine exercise of the chain logic, using the exact
+    # commands a real operator runs, not a parallel CI-only code path.
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping:1})' --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      MONGODB_URI: mongodb://127.0.0.1:27017/leakproofx_ci
+      JWT_ACCESS_SECRET: ci-access-secret-at-least-32-characters-long
+      JWT_REFRESH_SECRET: ci-refresh-secret-at-least-32-characters-long
+      QR_SIGNING_SECRET: ci-qr-secret-at-least-32-characters-long-too
+      ALLOWED_ORIGINS: http://localhost:5173
+      SEED_ADMIN_EMAIL: admin@leakproofx.local
+      SEED_ADMIN_PASSWORD: ci-only-password-not-used-anywhere-real
+      SEED_ADMIN_NAME: CI Seed Admin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # package.json declares "engines": { "node": ">=20.0.0" } — pinning
+          # CI to that stated minimum rather than "latest" so a green run
+          # actually means "works on the version we claim to support."
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: Run test suite (no DB required)
+        run: npm test
+
+      - name: Seed one real audit log entry (exercises the real appendAuditLog path)
+        run: npm run seed:admin
+
+      - name: Verify the audit hash chain
+        run: node scripts/verifyHashChain.js --json

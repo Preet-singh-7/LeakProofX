@@ -6,6 +6,7 @@ const { assertExamTimeReached } = require('../papers/timeLock');
 const { appendAuditLog } = require('../logs/audit.service');
 const anomalyService = require('../anomaly/anomaly.service');
 const { ApiError } = require('../middleware/errorHandler');
+const logger = require('../logs/logger');
 const { CUSTODY_STEPS, PAPER_STATUS } = require('../config/constants');
 
 const STATUS_BY_STEP = {
@@ -25,7 +26,29 @@ const STATUS_BY_STEP = {
  * to discard.
  */
 async function recordScan(input, actor) {
-  const { paperId } = verifyQrToken(input.qrToken);
+  let paperId;
+  try {
+    ({ paperId } = verifyQrToken(input.qrToken));
+  } catch (err) {
+    // A forged or tampered QR token fails signature verification here,
+    // before any paper is even looked up — but an attempt to forge a
+    // custody QR is exactly the kind of event every other rejection path
+    // in this system writes to the audit trail and surfaces at the
+    // security log level (see the rejected-transition path below). This
+    // one previously did neither, leaving signature-forgery attempts
+    // invisible to the audit log and the anomaly engine alike — found via
+    // adversarial testing and fixed here (see docs/security.md).
+    await appendAuditLog({
+      actorUserId: actor.id,
+      actorRoleId: actor.role,
+      action: 'QR_TOKEN_REJECTED',
+      targetType: 'Paper',
+      targetId: null,
+      metadata: { reason: err.message },
+    });
+    logger.security({ userId: actor.id, role: actor.role }, 'rejected invalid or forged custody QR token');
+    throw err;
+  }
   const paper = await Paper.findById(paperId);
   if (!paper) throw new ApiError(404, 'Paper not found for this QR token');
 
