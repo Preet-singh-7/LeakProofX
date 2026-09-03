@@ -25,7 +25,7 @@ export async function decryptPaper(id, { location, deviceId } = {}) {
   return data; // { title, examName, content }
 }
 
-export async function printPaper(id, { location, deviceId } = {}) {
-  const { data } = await apiClient.post(`/papers/${id}/print`, { location, deviceId });
+export async function printPaper(id, { location, deviceId, selfieImage } = {}) {
+  const { data } = await apiClient.post(`/papers/${id}/print`, { location, deviceId, selfieImage });
   return data;
 }

@@ -1,12 +1,13 @@
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useSync } from '../context/SyncContext';
-import { SCAN_ROLES } from '../utils/constants';
+import { SCAN_ROLES, PRINT_ROLES } from '../utils/constants';
 
 export default function HomeScreen({ navigation }) {
   const { user, logout } = useAuth();
   const { isOnline, queueCount } = useSync();
   const canScan = SCAN_ROLES.includes(user.role);
+  const canPrint = PRINT_ROLES.includes(user.role);
 
   return (
     <View style={styles.container}>
@@ -22,6 +23,13 @@ export default function HomeScreen({ navigation }) {
           <Pressable style={styles.card} onPress={() => navigation.navigate('Scan')}>
             <Text style={styles.cardTitle}>Scan a paper</Text>
             <Text style={styles.cardSubtitle}>Record a custody transition via QR code</Text>
+          </Pressable>
+        )}
+
+        {canPrint && (
+          <Pressable style={styles.card} onPress={() => navigation.navigate('Print')}>
+            <Text style={styles.cardTitle}>Print a paper</Text>
+            <Text style={styles.cardSubtitle}>Identify by QR, capture ID evidence, record the print</Text>
           </Pressable>
         )}
 

@@ -16,4 +16,9 @@ const deactivate = asyncHandler(async (req, res) => {
   res.status(200).json({ user });
 });
 
-module.exports = { list, getOne, deactivate };
+const setIdProof = asyncHandler(async (req, res) => {
+  const user = await usersService.setIdProof(req.params.id, req.body.idProofImage, req.user);
+  res.status(200).json({ user });
+});
+
+module.exports = { list, getOne, deactivate, setIdProof };

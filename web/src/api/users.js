@@ -14,3 +14,8 @@ export async function deactivateUser(id) {
   const { data } = await apiClient.post(`/users/${id}/deactivate`);
   return data.user;
 }
+
+export async function setIdProof(id, idProofImage) {
+  const { data } = await apiClient.post(`/users/${id}/id-proof`, { idProofImage });
+  return data.user;
+}

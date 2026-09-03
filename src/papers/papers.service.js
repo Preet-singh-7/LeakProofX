@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const Paper = require('../models/Paper');
 const TrackingLog = require('../models/TrackingLog');
+const VerificationEvidence = require('../models/VerificationEvidence');
 const { encryptContent, decryptContent } = require('../encryption/crypto');
 const { signQrToken, renderQrDataUrl } = require('./qr');
 const { evaluateTransition } = require('./custody');
@@ -35,13 +36,31 @@ async function createPaper(input, actor) {
   paper.qrToken = signQrToken(paper._id);
   await paper.save();
 
+  // Accountability evidence: a live selfie captured client-side at the
+  // moment of submission (required by createPaperSchema, not optional) —
+  // so whoever created this specific paper is photographically on record,
+  // not just "whoever's password worked." See src/verification/.
+  const evidence = await VerificationEvidence.create({
+    userId: actor.id,
+    paperId: paper._id,
+    action: 'PAPER_CREATED',
+    selfieImage: input.selfieImage,
+    capturedAt: new Date(),
+  });
+
   await appendAuditLog({
     actorUserId: actor.id,
     actorRoleId: actor.role,
     action: 'PAPER_CREATED',
     targetType: 'Paper',
     targetId: String(paper._id),
-    metadata: { title: paper.title, examName: paper.examName, examTime: paper.examTime, keyId },
+    metadata: {
+      title: paper.title,
+      examName: paper.examName,
+      examTime: paper.examTime,
+      keyId,
+      verificationEvidenceId: String(evidence._id),
+    },
   });
 
   return paper;
@@ -73,7 +92,7 @@ async function getQrImage(id) {
  * action gets recorded, since printing is a materially different exposure
  * event than an on-screen decrypt.
  */
-async function accessPaperContent(id, actor, { action, location, deviceId }) {
+async function accessPaperContent(id, actor, { action, location, deviceId, selfieImage }) {
   let paper = await getPaperById(id);
   const now = new Date();
   const eventType = action.startsWith('PAPER_DECRYPTED') ? 'DECRYPT' : 'PRINT';
@@ -165,13 +184,30 @@ async function accessPaperContent(id, actor, { action, location, deviceId }) {
       keyId: paper.keyId,
     });
 
+    // Accountability evidence for the one content-access action that
+    // produces a physical, leak-able copy: printing. A live selfie is
+    // required by printContentSchema (not optional) whenever action is
+    // PAPER_PRINTED — decrypt (on-screen view) doesn't carry one and
+    // doesn't need this. See src/verification/.
+    let verificationEvidenceId;
+    if (action === 'PAPER_PRINTED') {
+      const evidence = await VerificationEvidence.create({
+        userId: actor.id,
+        paperId: paper._id,
+        action: 'PAPER_PRINTED',
+        selfieImage,
+        capturedAt: now,
+      });
+      verificationEvidenceId = String(evidence._id);
+    }
+
     await appendAuditLog({
       actorUserId: actor.id,
       actorRoleId: actor.role,
       action,
       targetType: 'Paper',
       targetId: String(paper._id),
-      metadata: { location, deviceId, success: true },
+      metadata: { location, deviceId, success: true, verificationEvidenceId },
     });
     await anomalyService.recordEvent({
       type: eventType,

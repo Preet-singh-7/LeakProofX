@@ -2,15 +2,18 @@ const { Router } = require('express');
 const controller = require('./papers.controller');
 const { validate, jsonBodyParser } = require('../security/input-validation');
 const { sensitiveActionLimiter } = require('../security/rate-limit');
-const { createPaperSchema, paperIdParamSchema, accessContentSchema } = require('./papers.validation');
+const { createPaperSchema, paperIdParamSchema, accessContentSchema, printContentSchema } = require('./papers.validation');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { ROLES } = require('../config/constants');
 
 const router = Router();
 
-// 2mb, not the platform-wide 10kb default: paper content itself lives in
-// this router's POST / body (see papers.validation.js's 2MB content cap).
-router.use(jsonBodyParser({ limit: '2mb' }));
+// 4mb, not the platform-wide 10kb default: paper content lives in this
+// router's POST / body (papers.validation.js's 2MB content cap), and both
+// POST / and POST /:id/print now also carry a live-captured selfieImage
+// (accountability evidence — see src/verification/), so there's headroom
+// for content + selfie together.
+router.use(jsonBodyParser({ limit: '4mb' }));
 router.use(requireAuth);
 
 router.post('/', requireRole([ROLES.BOARD, ROLES.ADMIN]), validate(createPaperSchema), controller.create);
@@ -35,7 +38,7 @@ router.post(
   sensitiveActionLimiter,
   validate(paperIdParamSchema, 'params'),
   requireRole([ROLES.INVIGILATOR, ROLES.ADMIN]),
-  validate(accessContentSchema),
+  validate(printContentSchema),
   controller.print
 );
 

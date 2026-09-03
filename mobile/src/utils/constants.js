@@ -22,3 +22,6 @@ export const CUSTODY_STEP_ORDER = [
 // Roles the backend's POST /tracking/scan allows at all (custody.js narrows
 // further per exact step pair — this is just who should see the scan screen).
 export const SCAN_ROLES = [ROLES.COURIER, ROLES.CENTER, ROLES.INVIGILATOR, ROLES.BOARD, ROLES.ADMIN];
+
+// Mirrors papers.routes.js's requireRole on POST /papers/:id/print.
+export const PRINT_ROLES = [ROLES.INVIGILATOR, ROLES.ADMIN];

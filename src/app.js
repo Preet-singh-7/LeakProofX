@@ -15,6 +15,7 @@ const papersRoutes = require('./papers/papers.routes');
 const trackingRoutes = require('./tracking/tracking.routes');
 const alertsRoutes = require('./alerts/alerts.routes');
 const dashboardRoutes = require('./dashboard/dashboard.routes');
+const verificationRoutes = require('./verification/verification.routes');
 
 function buildApp() {
   const app = express();
@@ -42,6 +43,7 @@ function buildApp() {
   api.use('/tracking', trackingRoutes);
   api.use('/alerts', alertsRoutes);
   api.use('/dashboard', dashboardRoutes);
+  api.use('/verification-evidence', verificationRoutes);
 
   app.use(env.apiPrefix, api);
 

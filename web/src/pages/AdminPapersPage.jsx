@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPaper, listPapers } from '../api/papers';
 import { extractErrorMessage } from '../api/client';
 import { Badge, Button, Card, EmptyState, ErrorBanner, LoadingSpinner, PageHeader } from '../components/ui';
+import { SelfieCapture } from '../components/SelfieCapture';
 
 const initialForm = {
   title: '',
@@ -15,6 +16,7 @@ const initialForm = {
 
 function CreatePaperForm({ onCreated }) {
   const [form, setForm] = useState(initialForm);
+  const [selfieImage, setSelfieImage] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -27,6 +29,10 @@ function CreatePaperForm({ onCreated }) {
     e.preventDefault();
     setError('');
     setSuccess(null);
+    if (!selfieImage) {
+      setError('Capture a live selfie before scheduling this paper — required for accountability.');
+      return;
+    }
     setSubmitting(true);
     try {
       const assignedCenterIds = form.assignedCenterIds
@@ -39,9 +45,11 @@ function CreatePaperForm({ onCreated }) {
         content: form.content,
         examTime: new Date(form.examTime).toISOString(),
         durationMinutes: Number(form.durationMinutes),
+        selfieImage,
         ...(assignedCenterIds.length ? { assignedCenterIds } : {}),
       });
       setForm(initialForm);
+      setSelfieImage(null);
       setSuccess(paper);
       onCreated();
     } catch (err) {
@@ -127,7 +135,13 @@ function CreatePaperForm({ onCreated }) {
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting}>
+      <SelfieCapture
+        image={selfieImage}
+        onCapture={setSelfieImage}
+        label="Who is submitting this paper"
+      />
+
+      <Button type="submit" disabled={submitting || !selfieImage}>
         {submitting ? 'Encrypting & scheduling…' : 'Schedule paper'}
       </Button>
     </form>

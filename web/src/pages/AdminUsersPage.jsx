@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
-import { deactivateUser, listUsers } from '../api/users';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { deactivateUser, listUsers, setIdProof } from '../api/users';
 import { registerUser } from '../api/auth';
 import { extractErrorMessage } from '../api/client';
 import { Badge, Button, Card, ErrorBanner, LoadingSpinner, PageHeader } from '../components/ui';
 import { ROLE_VALUES } from '../utils/constants';
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function CreateUserForm({ onCreated }) {
   const [form, setForm] = useState({ name: '', email: '', password: '', role: ROLE_VALUES[0] });
@@ -85,6 +94,37 @@ function CreateUserForm({ onCreated }) {
   );
 }
 
+function IdProofButton({ user, onVerified, onError }) {
+  const inputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later (e.g. to redo it)
+    if (!file) return;
+    setUploading(true);
+    onError('');
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await setIdProof(user._id, dataUrl);
+      onVerified();
+    } catch (err) {
+      onError(extractErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      <Button variant="secondary" disabled={uploading} onClick={() => inputRef.current?.click()}>
+        {uploading ? 'Uploading…' : user.idVerified ? 'Replace ID proof' : 'Upload ID proof'}
+      </Button>
+    </>
+  );
+}
+
 export default function AdminUsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -137,6 +177,7 @@ export default function AdminUsersPage() {
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">ID verified</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -149,12 +190,18 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3">
                     <Badge tone={u.isActive ? 'RESOLVED' : 'OPEN'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
                   </td>
+                  <td className="px-4 py-3">
+                    <Badge tone={u.idVerified ? 'RESOLVED' : 'OPEN'}>{u.idVerified ? 'Verified' : 'Not verified'}</Badge>
+                  </td>
                   <td className="px-4 py-3 text-right">
-                    {u.isActive && (
-                      <Button variant="danger" onClick={() => handleDeactivate(u._id)}>
-                        Deactivate
-                      </Button>
-                    )}
+                    <div className="flex justify-end gap-2">
+                      <IdProofButton user={u} onVerified={load} onError={setActionError} />
+                      {u.isActive && (
+                        <Button variant="danger" onClick={() => handleDeactivate(u._id)}>
+                          Deactivate
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

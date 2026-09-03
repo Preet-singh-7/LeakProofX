@@ -5,6 +5,7 @@ import { useAuth } from './context/AuthContext';
 import LoginScreen from './screens/LoginScreen';
 import HomeScreen from './screens/HomeScreen';
 import ScanScreen from './screens/ScanScreen';
+import PrintScreen from './screens/PrintScreen';
 import QueueScreen from './screens/QueueScreen';
 
 const Stack = createNativeStackNavigator();
@@ -27,6 +28,7 @@ export default function RootNavigator() {
           <>
             <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'LeakProofX' }} />
             <Stack.Screen name="Scan" component={ScanScreen} options={{ title: 'Scan custody QR' }} />
+            <Stack.Screen name="Print" component={PrintScreen} options={{ title: 'Print paper' }} />
             <Stack.Screen name="Queue" component={QueueScreen} options={{ title: 'Sync queue' }} />
           </>
         ) : (

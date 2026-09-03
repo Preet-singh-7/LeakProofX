@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { decryptPaper, getPaper, getPaperQr, printPaper } from '../api/papers';
 import { getTimeline, recordScan } from '../api/tracking';
+import { getVerificationEvidence, listVerificationEvidence } from '../api/verification';
 import { extractErrorMessage } from '../api/client';
 import { Badge, Button, Card, ErrorBanner, LoadingSpinner, PageHeader } from '../components/ui';
 import { RoleGate } from '../components/RoleGate';
+import { SelfieCapture } from '../components/SelfieCapture';
 import { CUSTODY_STEP_ORDER, ROLES } from '../utils/constants';
 
 const SCAN_ROLES = [ROLES.COURIER, ROLES.CENTER, ROLES.INVIGILATOR, ROLES.BOARD, ROLES.ADMIN];
 const CONTENT_ACCESS_ROLES = [ROLES.INVIGILATOR, ROLES.ADMIN];
+const EVIDENCE_VIEW_ROLES = [ROLES.ADMIN, ROLES.AUDITOR];
 
 function formatDate(iso) {
   return new Date(iso).toLocaleString();
@@ -95,6 +98,10 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
   const [content, setContent] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null); // 'decrypt' | 'print' | null
+  // Printing produces a physical, leak-able copy — decrypt (on-screen view)
+  // doesn't need this, print does (backend enforces it too, this is just
+  // the client-side prompt for the same requirement).
+  const [printSelfie, setPrintSelfie] = useState(null);
 
   async function handleDecrypt() {
     setError('');
@@ -117,10 +124,15 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
 
   async function handlePrint() {
     setError('');
+    if (!printSelfie) {
+      setError('Capture a live selfie before printing — required for accountability.');
+      return;
+    }
     setBusy('print');
     try {
-      const result = await printPaper(paper._id, { location, deviceId });
+      const result = await printPaper(paper._id, { location, deviceId, selfieImage: printSelfie });
       setContent(result.content);
+      setPrintSelfie(null);
       onAccessGranted();
       // Give React a tick to render the printable content before invoking
       // the browser print dialog.
@@ -158,11 +170,15 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
         </div>
       </div>
 
+      <div className="mb-3">
+        <SelfieCapture image={printSelfie} onCapture={setPrintSelfie} label="Who is printing this paper" />
+      </div>
+
       <div className="flex gap-2">
         <Button onClick={handleDecrypt} disabled={busy !== null}>
           {busy === 'decrypt' ? 'Decrypting…' : 'Decrypt & view'}
         </Button>
-        <Button variant="secondary" onClick={handlePrint} disabled={busy !== null}>
+        <Button variant="secondary" onClick={handlePrint} disabled={busy !== null || !printSelfie}>
           {busy === 'print' ? 'Preparing…' : 'Print'}
         </Button>
       </div>
@@ -170,6 +186,92 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
       {content !== null && (
         <div className="print-content mt-4 whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 font-mono text-sm text-slate-800">
           {content}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Investigation view, ADMIN/AUDITOR only — the whole point of this panel
+ * is answering "who created/printed this specific paper" after the fact,
+ * so it deliberately isn't reachable by the BOARD/INVIGILATOR who actually
+ * performed those actions (see src/verification/ on the backend — the API
+ * itself already enforces this; this is just the matching UI gate).
+ */
+function VerificationEvidencePanel({ paperId }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [openImage, setOpenImage] = useState(null); // { name, role, action, selfieImage } | null
+
+  useEffect(() => {
+    listVerificationEvidence({ paperId })
+      .then(setItems)
+      .catch((err) => setError(extractErrorMessage(err)))
+      .finally(() => setLoading(false));
+  }, [paperId]);
+
+  async function viewImage(id) {
+    setError('');
+    try {
+      const full = await getVerificationEvidence(id);
+      setOpenImage(full);
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="mb-1 text-sm font-semibold text-slate-700">Identity verification evidence</h2>
+      <p className="mb-3 text-xs text-slate-500">
+        A live selfie captured at the moment this paper was created and printed — the accountability record if either
+        action is ever traced back after a leak.
+      </p>
+      <ErrorBanner message={error} />
+
+      {loading ? (
+        <LoadingSpinner />
+      ) : items.length === 0 ? (
+        <p className="text-sm text-slate-400">No evidence recorded yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li
+              key={item._id}
+              className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm"
+            >
+              <div>
+                <p className="font-medium text-slate-900">
+                  {item.action === 'PAPER_CREATED' ? 'Created by' : 'Printed by'} {item.userId?.name}{' '}
+                  <span className="font-normal text-slate-500">({item.userId?.role})</span>
+                </p>
+                <p className="text-xs text-slate-500">{formatDate(item.capturedAt)}</p>
+              </div>
+              <Button variant="secondary" onClick={() => viewImage(item._id)}>
+                View photo
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {openImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setOpenImage(null)}
+        >
+          <div className="rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <p className="mb-2 text-sm font-medium text-slate-700">
+              {openImage.action === 'PAPER_CREATED' ? 'Created by' : 'Printed by'} {openImage.userId?.name} (
+              {openImage.userId?.role}) &middot; {formatDate(openImage.capturedAt)}
+            </p>
+            <img src={openImage.selfieImage} alt="Captured selfie" className="max-h-[70vh] rounded-md" />
+            <Button className="mt-3 w-full" onClick={() => setOpenImage(null)}>
+              Close
+            </Button>
+          </div>
         </div>
       )}
     </Card>
@@ -265,6 +367,10 @@ export default function TrackingDetailPage() {
               than hiding the panel and leaving the user to guess why. */}
           <RoleGate roles={CONTENT_ACCESS_ROLES}>
             <ContentAccessPanel paper={paper} onAccessGranted={load} />
+          </RoleGate>
+
+          <RoleGate roles={EVIDENCE_VIEW_ROLES}>
+            <VerificationEvidencePanel paperId={paper._id} />
           </RoleGate>
         </div>
 

@@ -12,6 +12,11 @@ const createPaperSchema = z
     durationMinutes: z.number().int().positive().max(24 * 60),
     assignedCenterIds: z.array(objectId).default([]),
     expectedCustodySteps: z.array(z.enum(CUSTODY_STEP_ORDER)).optional(),
+    // Required, not optional: a live selfie captured client-side at the
+    // moment of submission, so whoever created this specific paper is
+    // photographically accountable for it — not just "whoever's password
+    // worked." See src/verification/.
+    selfieImage: z.string().min(1),
   })
   .strict();
 
@@ -24,4 +29,13 @@ const accessContentSchema = z
   })
   .strict();
 
-module.exports = { createPaperSchema, paperIdParamSchema, accessContentSchema };
+// Printing is the one content-access action that produces a physical,
+// leak-able copy — decrypt (on-screen view) does not require this, print
+// does. Same accountability reasoning as createPaperSchema's selfieImage.
+const printContentSchema = accessContentSchema
+  .extend({
+    selfieImage: z.string().min(1),
+  })
+  .strict();
+
+module.exports = { createPaperSchema, paperIdParamSchema, accessContentSchema, printContentSchema };

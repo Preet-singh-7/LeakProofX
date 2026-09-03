@@ -11,10 +11,11 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.leakproofx.scanner",
       "infoPlist": {
-        "NSCameraUsageDescription": "Camera access is required to scan custody QR codes on exam papers."
+        "NSCameraUsageDescription": "Camera access is required to scan custody QR codes and to capture live ID photos when printing exam papers."
       }
     },
     "android": {
+      "package": "com.leakproofx.scanner",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
