@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const Paper = require('../models/Paper');
 const TrackingLog = require('../models/TrackingLog');
 const VerificationEvidence = require('../models/VerificationEvidence');
+const Question = require('../models/Question');
 const { encryptContent, decryptContent } = require('../encryption/crypto');
 const { signQrToken, renderQrDataUrl } = require('./qr');
 const { evaluateTransition } = require('./custody');
@@ -11,7 +12,26 @@ const anomalyService = require('../anomaly/anomaly.service');
 const { ApiError } = require('../middleware/errorHandler');
 const { CUSTODY_STEPS, PAPER_STATUS, ROLES } = require('../config/constants');
 
+/**
+ * The only check ever done on an uploaded PDF: confirm its first bytes are
+ * the "%PDF-" magic header. Deliberately not a real parse — no PDF library
+ * touches this content, ever, on the server. That's what keeps this safe:
+ * the file is stored and returned as opaque encrypted bytes for the
+ * browser's own PDF viewer to render, so a malformed/malicious PDF has
+ * nothing server-side to exploit. This check just catches an honest
+ * mistake (wrong file, renamed extension), not a determined attacker.
+ */
+function assertValidPdf(base64Content) {
+  const header = Buffer.from(base64Content.slice(0, 8), 'base64').toString('latin1');
+  if (!header.startsWith('%PDF-')) {
+    throw new ApiError(400, 'File does not look like a valid PDF', undefined, 'INVALID_PDF');
+  }
+}
+
 async function createPaper(input, actor) {
+  if (input.contentType === 'PDF') {
+    assertValidPdf(input.content);
+  }
   const { contentCipher, iv, authTag, keyId } = encryptContent(input.content);
 
   // qrToken needs the paper's _id, so create first with a placeholder, then
@@ -24,6 +44,7 @@ async function createPaper(input, actor) {
     iv,
     authTag,
     keyId,
+    contentType: input.contentType,
     examTime: input.examTime,
     durationMinutes: input.durationMinutes,
     assignedCenterIds: input.assignedCenterIds,
@@ -222,7 +243,7 @@ async function accessPaperContent(id, actor, { action, location, deviceId, selfi
       deviceId,
     });
 
-    return { title: paper.title, examName: paper.examName, content: plaintext };
+    return { title: paper.title, examName: paper.examName, content: plaintext, contentType: paper.contentType };
   } catch (err) {
     // Failed/denied access attempts are exactly the signal the Phase 2
     // R_FAILED_DECRYPT / R_TIME_WINDOW rules key off of — record them even
@@ -252,4 +273,33 @@ async function accessPaperContent(id, actor, { action, location, deviceId, selfi
   }
 }
 
-module.exports = { createPaper, getPaperById, listPapers, getQrImage, accessPaperContent };
+/**
+ * Reveals exactly which questions (and in what order) compiled a generated
+ * paper's content — deliberately not part of any routine response (see
+ * Paper.js's toJSON). This is the forensic path: an investigation after a
+ * leak, not something the person who generated the paper gets to see for
+ * free. Gated to ADMIN/AUDITOR at the route level, same as
+ * verification-evidence, and every lookup is itself audit-logged since
+ * viewing this is a meaningful event in its own right.
+ */
+async function getPaperComposition(id, actor) {
+  const paper = await getPaperById(id);
+  const questions = await Question.find({ _id: { $in: paper.questionIds } });
+  // Preserve the paper's own stored order rather than whatever order Mongo
+  // returned them in.
+  const byId = new Map(questions.map((q) => [String(q._id), q]));
+  const ordered = paper.questionIds.map((qid) => byId.get(String(qid))).filter(Boolean);
+
+  await appendAuditLog({
+    actorUserId: actor.id,
+    actorRoleId: actor.role,
+    action: 'PAPER_COMPOSITION_VIEWED',
+    targetType: 'Paper',
+    targetId: String(paper._id),
+    metadata: { questionCount: ordered.length },
+  });
+
+  return { paperId: String(paper._id), questions: ordered };
+}
+
+module.exports = { createPaper, getPaperById, listPapers, getQrImage, accessPaperContent, getPaperComposition };

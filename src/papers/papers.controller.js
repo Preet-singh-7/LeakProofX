@@ -1,9 +1,15 @@
 const papersService = require('./papers.service');
+const { generatePaperVariants } = require('./generation.service');
 const asyncHandler = require('../middleware/asyncHandler');
 
 const create = asyncHandler(async (req, res) => {
   const paper = await papersService.createPaper(req.body, req.user);
   res.status(201).json({ paper });
+});
+
+const generate = asyncHandler(async (req, res) => {
+  const papers = await generatePaperVariants(req.body, req.user);
+  res.status(201).json({ papers });
 });
 
 const list = asyncHandler(async (req, res) => {
@@ -40,4 +46,9 @@ const print = asyncHandler(async (req, res) => {
   res.status(200).json(result);
 });
 
-module.exports = { create, list, getOne, getQr, decrypt, print };
+const getComposition = asyncHandler(async (req, res) => {
+  const composition = await papersService.getPaperComposition(req.params.id, req.user);
+  res.status(200).json(composition);
+});
+
+module.exports = { create, generate, list, getOne, getQr, decrypt, print, getComposition };

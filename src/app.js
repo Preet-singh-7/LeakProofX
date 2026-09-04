@@ -12,6 +12,7 @@ const { globalLimiter } = require('./security/rate-limit');
 const authRoutes = require('./auth/auth.routes');
 const usersRoutes = require('./users/users.routes');
 const papersRoutes = require('./papers/papers.routes');
+const questionsRoutes = require('./questions/questions.routes');
 const trackingRoutes = require('./tracking/tracking.routes');
 const alertsRoutes = require('./alerts/alerts.routes');
 const dashboardRoutes = require('./dashboard/dashboard.routes');
@@ -40,6 +41,7 @@ function buildApp() {
   api.use('/auth', authRoutes);
   api.use('/users', usersRoutes);
   api.use('/papers', papersRoutes);
+  api.use('/questions', questionsRoutes);
   api.use('/tracking', trackingRoutes);
   api.use('/alerts', alertsRoutes);
   api.use('/dashboard', dashboardRoutes);

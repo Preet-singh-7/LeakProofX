@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/alerts', label: 'Alerts', roles: [ROLES.ADMIN, ROLES.BOARD, ROLES.AUDITOR, ROLES.CENTER] },
   { to: '/reports', label: 'Reports', roles: [ROLES.ADMIN, ROLES.BOARD, ROLES.AUDITOR] },
   { to: '/admin/papers', label: 'Paper Scheduling', roles: [ROLES.ADMIN, ROLES.BOARD] },
+  { to: '/admin/questions', label: 'Question Bank', roles: [ROLES.ADMIN, ROLES.BOARD] },
   { to: '/admin/users', label: 'User Management', roles: [ROLES.ADMIN] },
 ];
 

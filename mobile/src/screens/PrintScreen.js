@@ -180,7 +180,11 @@ export default function PrintScreen() {
           </View>
           <Text style={styles.label}>{result.title} — {result.examName}</Text>
           <View style={styles.contentBox}>
-            <Text style={styles.contentText}>{result.content}</Text>
+            {result.contentType === 'PDF' ? (
+              <Text style={styles.contentText}>PDF paper — open the web dashboard to view the content. Evidence is recorded either way.</Text>
+            ) : (
+              <Text style={styles.contentText}>{result.content}</Text>
+            )}
           </View>
           <Pressable style={styles.button} onPress={reset}>
             <Text style={styles.buttonText}>Print another paper</Text>

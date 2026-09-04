@@ -14,6 +14,7 @@ import AlertDetailPage from './pages/AlertDetailPage';
 import ReportsPage from './pages/ReportsPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import AdminPapersPage from './pages/AdminPapersPage';
+import QuestionBankPage from './pages/QuestionBankPage';
 import { ROLES } from './utils/constants';
 
 export default function App() {
@@ -41,6 +42,7 @@ export default function App() {
 
               <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.BOARD]} />}>
                 <Route path="admin/papers" element={<AdminPapersPage />} />
+                <Route path="admin/questions" element={<QuestionBankPage />} />
               </Route>
 
               <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]} />}>

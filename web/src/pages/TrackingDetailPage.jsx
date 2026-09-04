@@ -96,6 +96,7 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
   const [location, setLocation] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [content, setContent] = useState(null);
+  const [contentType, setContentType] = useState('TEXT');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null); // 'decrypt' | 'print' | null
   // Printing produces a physical, leak-able copy — decrypt (on-screen view)
@@ -110,6 +111,7 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
     try {
       const result = await decryptPaper(paper._id, { location, deviceId });
       setContent(result.content);
+      setContentType(result.contentType || 'TEXT');
       // A first successful decrypt auto-transitions custody to
       // OPENED_FOR_EXAM on the backend (papers.service.js) — refresh the
       // parent page's paper/timeline state so that's reflected here too,
@@ -132,6 +134,7 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
     try {
       const result = await printPaper(paper._id, { location, deviceId, selfieImage: printSelfie });
       setContent(result.content);
+      setContentType(result.contentType || 'TEXT');
       setPrintSelfie(null);
       onAccessGranted();
       // Give React a tick to render the printable content before invoking
@@ -183,7 +186,14 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
         </Button>
       </div>
 
-      {content !== null && (
+      {content !== null && contentType === 'PDF' && (
+        <iframe
+          title="Paper PDF"
+          src={`data:application/pdf;base64,${content}`}
+          className="print-content mt-4 h-[600px] w-full rounded-md border border-slate-200"
+        />
+      )}
+      {content !== null && contentType !== 'PDF' && (
         <div className="print-content mt-4 whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 font-mono text-sm text-slate-800">
           {content}
         </div>

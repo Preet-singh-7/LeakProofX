@@ -49,6 +49,14 @@ const ALERT_STATUS = Object.freeze({
   RESOLVED: 'RESOLVED',
 });
 
+const QUESTION_DIFFICULTY = Object.freeze({
+  EASY: 'EASY',
+  MEDIUM: 'MEDIUM',
+  HARD: 'HARD',
+});
+
+const QUESTION_DIFFICULTY_VALUES = Object.values(QUESTION_DIFFICULTY);
+
 module.exports = {
   ROLES,
   ROLE_VALUES,
@@ -57,4 +65,6 @@ module.exports = {
   PAPER_STATUS,
   ALERT_SEVERITY,
   ALERT_STATUS,
+  QUESTION_DIFFICULTY,
+  QUESTION_DIFFICULTY_VALUES,
 };
