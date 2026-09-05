@@ -32,6 +32,7 @@ const decrypt = asyncHandler(async (req, res) => {
     action: 'PAPER_DECRYPTED',
     location: req.body?.location,
     deviceId: req.body?.deviceId,
+    selfieImage: req.body?.selfieImage,
   });
   res.status(200).json(result);
 });

@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const controller = require('./questions.controller');
 const { validate, jsonBodyParser } = require('../security/input-validation');
-const { adminLimiter } = require('../security/rate-limit');
+const { questionBankLimiter } = require('../security/rate-limit');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { ROLES } = require('../config/constants');
 const {
@@ -18,7 +18,7 @@ const router = Router();
 // to the same roles that can create papers (BOARD/ADMIN), not opened up to
 // every authenticated role the way papers' GET / is.
 router.use(jsonBodyParser({ limit: '10kb' }));
-router.use(adminLimiter);
+router.use(questionBankLimiter);
 router.use(requireAuth, requireRole([ROLES.BOARD, ROLES.ADMIN]));
 
 router.post('/', validate(createQuestionSchema), controller.create);

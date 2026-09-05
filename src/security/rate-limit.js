@@ -73,4 +73,19 @@ const adminLimiter = rateLimit({
   handler: limitHandler,
 });
 
-module.exports = { globalLimiter, authLimiter, sensitiveActionLimiter, adminLimiter };
+// /questions/*: same actor trust level as adminLimiter (BOARD/ADMIN), but a
+// genuinely different traffic shape — importing a question bank from a PDF
+// legitimately submits one request per question, and a real question bank
+// can easily run past adminLimiter's 60-per-15-min cap in a single import.
+// A separate, more generous limiter keeps that workflow from tripping the
+// same tight cap /users/* correctly keeps, rather than loosening admin
+// routes in general to accommodate one bulkier one.
+const questionBankLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limitHandler,
+});
+
+module.exports = { globalLimiter, authLimiter, sensitiveActionLimiter, adminLimiter, questionBankLimiter };

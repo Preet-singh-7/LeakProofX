@@ -25,8 +25,8 @@ export async function generatePapers(input) {
   return data.papers;
 }
 
-export async function decryptPaper(id, { location, deviceId } = {}) {
-  const { data } = await apiClient.post(`/papers/${id}/decrypt`, { location, deviceId });
+export async function decryptPaper(id, { location, deviceId, selfieImage } = {}) {
+  const { data } = await apiClient.post(`/papers/${id}/decrypt`, { location, deviceId, selfieImage });
   return data; // { title, examName, content }
 }
 

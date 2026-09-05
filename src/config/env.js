@@ -61,6 +61,21 @@ const env = {
     name: process.env.SEED_ADMIN_NAME || 'System Admin',
   },
 
+  // Hosted Groq API (free tier) for question tagging + syllabus-balanced
+  // generation (src/llm/). apiKey is deliberately allowed to be undefined
+  // here rather than `required()` — those two features fail loudly on
+  // their own, per-request, when it's missing (see src/llm/client.js),
+  // rather than blocking every other unrelated endpoint at boot.
+  // See docs/llm-integration.md.
+  llm: {
+    apiKey: process.env.GROQ_API_KEY,
+    model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+    timeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '9000', 10),
+    // Base delay before retrying a transient 429/503 (see src/llm/client.js);
+    // doubled each attempt. Configurable mainly so tests can make it tiny.
+    retryDelayMs: parseInt(process.env.LLM_RETRY_DELAY_MS || '500', 10),
+  },
+
   logLevel: process.env.LOG_LEVEL || 'info',
 };
 

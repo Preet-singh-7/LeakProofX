@@ -53,6 +53,19 @@ export function LoadingSpinner({ label = 'Loading…' }) {
   return <div className="py-10 text-center text-sm text-slate-500">{label}</div>;
 }
 
+// A visibly-moving spinner for inline use inside a button — plain "Adding…"
+// text alone can look frozen once an action's latency includes a real LLM
+// round-trip (question tagging / syllabus balancing, up to a few seconds
+// each), which matters for reading well in front of a live audience.
+export function InlineSpinner({ className = '' }) {
+  return (
+    <span
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent align-[-2px] ${className}`}
+      aria-hidden="true"
+    />
+  );
+}
+
 export function EmptyState({ label }) {
   return <div className="py-10 text-center text-sm text-slate-400">{label}</div>;
 }

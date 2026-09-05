@@ -30,20 +30,23 @@ const createPaperSchema = z
 
 const paperIdParamSchema = z.object({ id: objectId }).strict();
 
+// Decrypt (on-screen view) and print both require a live selfie — the
+// moment content is decrypted, its plaintext is exposed to whoever's
+// looking at the screen, and that's already enough to leak it (photograph
+// the monitor with a phone, screenshot, dictate it) without ever hitting
+// "print." An earlier version of this schema treated only print as the
+// leak-risk action; that was a real gap, found in testing, not a
+// deliberate scope limit — viewing is the actual exposure event, printing
+// is just one way to act on it. Same accountability reasoning as
+// createPaperSchema's selfieImage either way.
 const accessContentSchema = z
   .object({
     location: z.string().max(200).optional(),
     deviceId: z.string().max(200).optional(),
-  })
-  .strict();
-
-// Printing is the one content-access action that produces a physical,
-// leak-able copy — decrypt (on-screen view) does not require this, print
-// does. Same accountability reasoning as createPaperSchema's selfieImage.
-const printContentSchema = accessContentSchema
-  .extend({
     selfieImage: z.string().min(1),
   })
   .strict();
+
+const printContentSchema = accessContentSchema;
 
 module.exports = { createPaperSchema, paperIdParamSchema, accessContentSchema, printContentSchema };

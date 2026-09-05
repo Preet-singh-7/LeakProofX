@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listQuestions, createQuestion, deleteQuestion } from '../api/questions';
 import { extractErrorMessage } from '../api/client';
-import { Badge, Button, Card, EmptyState, ErrorBanner, LoadingSpinner, PageHeader } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBanner, InlineSpinner, LoadingSpinner, PageHeader } from '../components/ui';
 
 const DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'];
 
@@ -120,8 +120,14 @@ function AddQuestionForm({ onCreated }) {
           />
         </div>
       </div>
-      <Button type="submit" disabled={submitting}>
-        {submitting ? 'Adding…' : 'Add question'}
+      <Button type="submit" disabled={submitting} className="inline-flex items-center gap-2">
+        {submitting ? (
+          <>
+            <InlineSpinner /> Adding…
+          </>
+        ) : (
+          'Add question'
+        )}
       </Button>
     </form>
   );
@@ -143,6 +149,7 @@ function PdfQuestionImport({ onImported }) {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [addedCount, setAddedCount] = useState(0);
+  const [progress, setProgress] = useState(null); // { added, failed, total } | null — each question missing a tag costs a real LLM round-trip
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -178,7 +185,17 @@ function PdfQuestionImport({ onImported }) {
   async function handleSplit() {
     const { splitIntoQuestions } = await import('../utils/pdfText');
     const found = splitIntoQuestions(rawText);
-    setDrafts(found.map((text) => ({ text, ...defaults })));
+    // difficulty/marks detected in the source text (e.g. "[EASY]", "4 marks")
+    // win over the defaults; still just a starting point, every field stays editable.
+    setDrafts(
+      found.map((q) => ({
+        text: q.text,
+        subject: defaults.subject,
+        topic: defaults.topic,
+        difficulty: q.difficulty || defaults.difficulty,
+        marks: q.marks ?? defaults.marks,
+      }))
+    );
   }
 
   function updateDraft(i, field, value) {
@@ -192,27 +209,70 @@ function PdfQuestionImport({ onImported }) {
   async function handleAddAll() {
     setError('');
     setSubmitting(true);
+    const total = drafts.filter((d) => d.text.trim() && d.subject.trim()).length;
+    setProgress({ added: 0, failed: 0, total });
     let added = 0;
+    const failures = []; // { draft, message }
+    const remaining = [];
+    let consecutiveFailures = 0;
+    let stoppedEarly = false;
     try {
-      for (const draft of drafts) {
-        if (!draft.text.trim() || !draft.subject.trim()) continue;
-        await createQuestion({
-          subject: draft.subject,
-          topic: draft.topic || undefined,
-          difficulty: draft.difficulty,
-          marks: Number(draft.marks),
-          text: draft.text,
-        });
-        added += 1;
+      for (let i = 0; i < drafts.length; i++) {
+        const draft = drafts[i];
+        if (!draft.text.trim() || !draft.subject.trim()) {
+          remaining.push(draft);
+          continue;
+        }
+        // Each draft already survived client.js's own retry (up to 3
+        // attempts) before a failure ever reaches here — so 2 *different*
+        // drafts both failing back-to-back is a strong signal of a
+        // systemic problem (e.g. the LLM API's daily/plan quota being
+        // exhausted, not a one-off blip), not something more attempts will
+        // fix. Stop rather than burning through the rest of a 38-question
+        // batch at 3 wasted calls each — keep everything not yet tried for
+        // a later retry instead.
+        if (consecutiveFailures >= 2) {
+          remaining.push(...drafts.slice(i));
+          stoppedEarly = true;
+          break;
+        }
+        try {
+          // Any draft missing a topic costs a real LLM round-trip here
+          // (Job A, see docs/llm-integration.md) — one at a time, on
+          // purpose, so a failure is attributable to its own question.
+          await createQuestion({
+            subject: draft.subject,
+            topic: draft.topic || undefined,
+            difficulty: draft.difficulty,
+            marks: Number(draft.marks),
+            text: draft.text,
+          });
+          added += 1;
+          consecutiveFailures = 0;
+        } catch (err) {
+          failures.push({ draft, message: extractErrorMessage(err) });
+          remaining.push(draft);
+          consecutiveFailures += 1;
+        }
+        setProgress({ added, failed: failures.length, total });
       }
       setAddedCount(added);
-      setDrafts([]);
-      setRawText('');
-      onImported();
-    } catch (err) {
-      setError(`${extractErrorMessage(err)} (${added} of ${drafts.length} added before this failed)`);
+      setDrafts(remaining);
+      if (failures.length > 0) {
+        const prefix = stoppedEarly
+          ? `Stopped early after repeated failures (likely the AI service's quota/rate limit — see the message below). `
+          : '';
+        setError(
+          `${prefix}${added} added, ${failures.length} failed and kept below for retry. First failure: ${failures[0].message}` +
+            (failures.length > 1 ? ` (+${failures.length - 1} more)` : '')
+        );
+      } else {
+        setRawText('');
+      }
+      if (added > 0) onImported();
     } finally {
       setSubmitting(false);
+      setProgress(null);
     }
   }
 
@@ -356,8 +416,17 @@ function PdfQuestionImport({ onImported }) {
               </div>
             </div>
           ))}
-          <Button type="button" onClick={handleAddAll} disabled={submitting}>
-            {submitting ? 'Adding…' : `Add ${drafts.length} question${drafts.length === 1 ? '' : 's'} to bank`}
+          <Button type="button" onClick={handleAddAll} disabled={submitting} className="inline-flex items-center gap-2">
+            {submitting ? (
+              <>
+                <InlineSpinner />
+                {progress
+                  ? ` ${progress.added} added${progress.failed > 0 ? `, ${progress.failed} failed` : ''} of ${progress.total}`
+                  : ' Adding…'}
+              </>
+            ) : (
+              `Add ${drafts.length} question${drafts.length === 1 ? '' : 's'} to bank`
+            )}
           </Button>
         </div>
       )}

@@ -99,19 +99,26 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
   const [contentType, setContentType] = useState('TEXT');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null); // 'decrypt' | 'print' | null
-  // Printing produces a physical, leak-able copy — decrypt (on-screen view)
-  // doesn't need this, print does (backend enforces it too, this is just
-  // the client-side prompt for the same requirement).
-  const [printSelfie, setPrintSelfie] = useState(null);
+  // Both decrypt (on-screen view) and print require a live selfie —
+  // decrypting exposes the plaintext to whoever's looking at the screen,
+  // which is already enough to leak it (photograph the monitor, screenshot,
+  // dictate it), so it needs the same accountability as print, not just
+  // print itself. One capture covers whichever action is taken next.
+  const [actionSelfie, setActionSelfie] = useState(null);
 
   async function handleDecrypt() {
     setError('');
+    if (!actionSelfie) {
+      setError('Capture a live selfie before decrypting — required for accountability.');
+      return;
+    }
     setContent(null);
     setBusy('decrypt');
     try {
-      const result = await decryptPaper(paper._id, { location, deviceId });
+      const result = await decryptPaper(paper._id, { location, deviceId, selfieImage: actionSelfie });
       setContent(result.content);
       setContentType(result.contentType || 'TEXT');
+      setActionSelfie(null);
       // A first successful decrypt auto-transitions custody to
       // OPENED_FOR_EXAM on the backend (papers.service.js) — refresh the
       // parent page's paper/timeline state so that's reflected here too,
@@ -126,16 +133,16 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
 
   async function handlePrint() {
     setError('');
-    if (!printSelfie) {
+    if (!actionSelfie) {
       setError('Capture a live selfie before printing — required for accountability.');
       return;
     }
     setBusy('print');
     try {
-      const result = await printPaper(paper._id, { location, deviceId, selfieImage: printSelfie });
+      const result = await printPaper(paper._id, { location, deviceId, selfieImage: actionSelfie });
       setContent(result.content);
       setContentType(result.contentType || 'TEXT');
-      setPrintSelfie(null);
+      setActionSelfie(null);
       onAccessGranted();
       // Give React a tick to render the printable content before invoking
       // the browser print dialog.
@@ -174,14 +181,14 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
       </div>
 
       <div className="mb-3">
-        <SelfieCapture image={printSelfie} onCapture={setPrintSelfie} label="Who is printing this paper" />
+        <SelfieCapture image={actionSelfie} onCapture={setActionSelfie} label="Who is accessing this paper" />
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={handleDecrypt} disabled={busy !== null}>
+        <Button onClick={handleDecrypt} disabled={busy !== null || !actionSelfie}>
           {busy === 'decrypt' ? 'Decrypting…' : 'Decrypt & view'}
         </Button>
-        <Button variant="secondary" onClick={handlePrint} disabled={busy !== null || !printSelfie}>
+        <Button variant="secondary" onClick={handlePrint} disabled={busy !== null || !actionSelfie}>
           {busy === 'print' ? 'Preparing…' : 'Print'}
         </Button>
       </div>
@@ -202,12 +209,18 @@ function ContentAccessPanel({ paper, onAccessGranted }) {
   );
 }
 
+const EVIDENCE_ACTION_LABEL = {
+  PAPER_CREATED: 'Created by',
+  PAPER_DECRYPTED: 'Decrypted (viewed) by',
+  PAPER_PRINTED: 'Printed by',
+};
+
 /**
  * Investigation view, ADMIN/AUDITOR only — the whole point of this panel
- * is answering "who created/printed this specific paper" after the fact,
- * so it deliberately isn't reachable by the BOARD/INVIGILATOR who actually
- * performed those actions (see src/verification/ on the backend — the API
- * itself already enforces this; this is just the matching UI gate).
+ * is answering "who created/viewed/printed this specific paper" after the
+ * fact, so it deliberately isn't reachable by the BOARD/INVIGILATOR who
+ * actually performed those actions (see src/verification/ on the backend —
+ * the API itself already enforces this; this is just the matching UI gate).
  */
 function VerificationEvidencePanel({ paperId }) {
   const [items, setItems] = useState([]);
@@ -236,8 +249,8 @@ function VerificationEvidencePanel({ paperId }) {
     <Card>
       <h2 className="mb-1 text-sm font-semibold text-slate-700">Identity verification evidence</h2>
       <p className="mb-3 text-xs text-slate-500">
-        A live selfie captured at the moment this paper was created and printed — the accountability record if either
-        action is ever traced back after a leak.
+        A live selfie captured at the moment this paper was created, decrypted, or printed — the accountability
+        record if any of those actions is ever traced back after a leak.
       </p>
       <ErrorBanner message={error} />
 
@@ -254,7 +267,7 @@ function VerificationEvidencePanel({ paperId }) {
             >
               <div>
                 <p className="font-medium text-slate-900">
-                  {item.action === 'PAPER_CREATED' ? 'Created by' : 'Printed by'} {item.userId?.name}{' '}
+                  {EVIDENCE_ACTION_LABEL[item.action] || item.action} {item.userId?.name}{' '}
                   <span className="font-normal text-slate-500">({item.userId?.role})</span>
                 </p>
                 <p className="text-xs text-slate-500">{formatDate(item.capturedAt)}</p>
@@ -274,7 +287,7 @@ function VerificationEvidencePanel({ paperId }) {
         >
           <div className="rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <p className="mb-2 text-sm font-medium text-slate-700">
-              {openImage.action === 'PAPER_CREATED' ? 'Created by' : 'Printed by'} {openImage.userId?.name} (
+              {EVIDENCE_ACTION_LABEL[openImage.action] || openImage.action} {openImage.userId?.name} (
               {openImage.userId?.role}) &middot; {formatDate(openImage.capturedAt)}
             </p>
             <img src={openImage.selfieImage} alt="Captured selfie" className="max-h-[70vh] rounded-md" />

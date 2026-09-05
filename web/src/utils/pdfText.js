@@ -20,25 +20,51 @@ export async function extractPdfText(file) {
   return pages.join('\n\n');
 }
 
-// Splits on a line that starts with a number followed by '.' or ')' — e.g.
-// "1. What is..." or "2) Explain..." — a common exam numbering pattern.
-// A starting point for the admin to edit, not a full automated parse:
-// every draft is reviewed and adjustable before anything is submitted.
+// The plain-number variant requires whitespace (or start-of-text)
+// immediately before the digits — not just "not another digit" — so it
+// doesn't false-positive on a reference code like "(25CAT-721)" or
+// "(E17984)" in a document's header, where the digits are preceded by a
+// letter or hyphen rather than real separation.
+const QUESTION_MARKER = /\bQ\d+\b|(?<=^|\s)\d+[.)](?=\s)/g;
+const DIFFICULTY_TAG = /\[(EASY|MEDIUM|HARD)\]/i;
+const MARKS_TAG = /(\d+)\s*marks?\b/i;
+const ANSWER_SECTION = /\bANSWER\s*(?:\/\s*KEY\s*POINTS?)?\s*:/i;
+
+// Splits on a question-number marker — "Q12", "12.", or "12)" all count —
+// found anywhere in the text, not just at the start of a line. PDF text
+// extraction (extractPdfText above) often collapses real line breaks into
+// plain spaces, since pdf.js just concatenates each text run rather than
+// preserving layout, so a "start of line" split misses markers that don't
+// happen to land after one of the arbitrary breaks that survive.
+//
+// For each resulting chunk, also pulls out a "[EASY|MEDIUM|HARD]" tag and
+// an "N marks" tag when present, and drops anything from an
+// "ANSWER" / "ANSWER / KEY POINTS:" marker onward — common in a real
+// question bank export, but that's answer content, not the question.
+// Still just a starting point: every draft is shown for review and edit
+// before anything is submitted.
 export function splitIntoQuestions(text) {
-  const lines = text
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const questions = [];
-  let current = '';
-  for (const line of lines) {
-    if (/^\d+[.)]\s+/.test(line)) {
-      if (current) questions.push(current.trim());
-      current = line.replace(/^\d+[.)]\s+/, '');
-    } else {
-      current += (current ? ' ' : '') + line;
-    }
-  }
-  if (current) questions.push(current.trim());
-  return questions;
+  const indices = [...text.matchAll(QUESTION_MARKER)].map((m) => m.index);
+  const rawChunks = indices.length === 0 ? [text] : indices.map((start, i) => text.slice(start, indices[i + 1] ?? text.length));
+
+  return rawChunks
+    .map((chunk) => {
+      let body = chunk.replace(/^\s*(Q\d+|\d+[.)])\s*/, '').trim();
+
+      const answerIdx = body.search(ANSWER_SECTION);
+      if (answerIdx !== -1) body = body.slice(0, answerIdx).trim();
+
+      const difficultyMatch = body.match(DIFFICULTY_TAG);
+      if (difficultyMatch) body = body.replace(difficultyMatch[0], '').trim();
+
+      const marksMatch = body.match(MARKS_TAG);
+      if (marksMatch) body = body.replace(marksMatch[0], '').trim();
+
+      return {
+        text: body.replace(/\s{2,}/g, ' ').trim(),
+        difficulty: difficultyMatch ? difficultyMatch[1].toUpperCase() : undefined,
+        marks: marksMatch ? Number(marksMatch[1]) : undefined,
+      };
+    })
+    .filter((q) => q.text.length > 0);
 }

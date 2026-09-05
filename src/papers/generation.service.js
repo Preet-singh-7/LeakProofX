@@ -5,6 +5,8 @@ const Question = require('../models/Question');
 const VerificationEvidence = require('../models/VerificationEvidence');
 const { encryptContent } = require('../encryption/crypto');
 const { signQrToken } = require('./qr');
+const { balanceTopics } = require('../llm/balanceTopics');
+const { LlmError } = require('../llm/client');
 const { appendAuditLog } = require('../logs/audit.service');
 const { ApiError } = require('../middleware/errorHandler');
 const { CUSTODY_STEPS, PAPER_STATUS } = require('../config/constants');
@@ -25,10 +27,104 @@ function shuffle(array) {
   return result;
 }
 
-function pickSelection(pools, blueprint) {
+function poolKey(topic, difficulty) {
+  return `${topic || ''}::${difficulty}`;
+}
+
+/**
+ * Turns the blueprint (topic optional per row) into a flat list of
+ * concrete (topic, difficulty, count) requirements. A row with an
+ * explicit topic passes through untouched — no LLM involved. A row left
+ * topic-unspecified has its count spread across whatever topics actually
+ * exist in the bank for that subject/difficulty via Job B (see
+ * docs/llm-integration.md) — this is what prevents a paper from
+ * accidentally ending up concentrated in one topic when the admin didn't
+ * ask for a specific one.
+ */
+async function expandBlueprint(subject, blueprint) {
+  const expanded = [];
+  for (const row of blueprint) {
+    if (row.topic) {
+      expanded.push({ topic: row.topic, difficulty: row.difficulty, count: row.count });
+      continue;
+    }
+
+    const pool = await Question.find({ subject, difficulty: row.difficulty }, 'topic');
+    const availability = {};
+    for (const q of pool) {
+      const key = q.topic || '';
+      availability[key] = (availability[key] || 0) + 1;
+    }
+
+    let distribution;
+    try {
+      distribution = await balanceTopics({ subject, difficulty: row.difficulty, totalCount: row.count, availability });
+    } catch (err) {
+      if (err instanceof LlmError) {
+        throw new ApiError(502, `AI syllabus balancing failed, paper not generated: ${err.message}`, undefined, 'LLM_BALANCING_FAILED');
+      }
+      throw err;
+    }
+
+    // NOT `topic || undefined` — an untagged question's topic really is the
+    // literal empty string '' (Question.js's schema default), a concrete
+    // value meaning "only untagged questions," not "no topic constraint at
+    // all." Coercing it to undefined here previously made buildPools skip
+    // the topic filter entirely for that entry, silently pulling from every
+    // topic instead of just the untagged ones — a real bug, caught live: a
+    // generated paper had the same question selected twice, once via its
+    // own topic's dedicated (small) pool and once via the untagged bucket's
+    // filter-less (and therefore much larger, overlapping) pool.
+    for (const [topic, count] of Object.entries(distribution)) {
+      expanded.push({ topic, difficulty: row.difficulty, count });
+    }
+  }
+
+  // Merge entries that land on the same (topic, difficulty) — e.g. two
+  // blueprint rows explicitly naming the same topic, or a balanced row's
+  // output overlapping an explicit row's topic.
+  const merged = new Map();
+  for (const entry of expanded) {
+    const key = poolKey(entry.topic, entry.difficulty);
+    if (merged.has(key)) {
+      merged.get(key).count += entry.count;
+    } else {
+      merged.set(key, { ...entry });
+    }
+  }
+  return [...merged.values()];
+}
+
+async function buildPools(subject, expanded) {
+  const pools = {};
+  for (const { topic, difficulty, count } of expanded) {
+    const key = poolKey(topic, difficulty);
+    if (pools[key]) continue;
+    // Always filter by topic, including the empty string (untagged) — every
+    // entry reaching this point came either from an explicit blueprint row
+    // or from Job B's distribution, both of which always carry a concrete
+    // topic value. There is no "no topic constraint" case here; a filter
+    // this unconditional is what keeps the untagged pool from silently
+    // widening to include every topic (see expandBlueprint's comment).
+    const pool = await Question.find({ subject, difficulty, topic });
+    if (pool.length < count) {
+      throw new ApiError(
+        400,
+        `Not enough ${difficulty} questions for subject "${subject}"${topic ? ` / topic "${topic}"` : ''} — need ${count}, have ${pool.length}`,
+        undefined,
+        'INSUFFICIENT_QUESTIONS'
+      );
+    }
+    pools[key] = pool;
+  }
+  return pools;
+}
+
+function pickSelection(pools, expanded) {
   const selected = [];
-  for (const { difficulty, count } of blueprint) {
-    selected.push(...shuffle(pools[difficulty]).slice(0, count));
+  for (const { topic, difficulty, count } of expanded) {
+    const key = poolKey(topic, difficulty);
+    selected.push(...shuffle(pools[key]).slice(0, count));
   }
   return selected;
 }
@@ -49,32 +145,20 @@ function compileContent({ title, examName, questions }) {
 
 /**
  * Generates one distinct, randomly-assembled paper per entry in
- * assignedCenterIds — each pulled fresh from the question bank per the same
- * blueprint (difficulty -> count), independently shuffled. Unlike
- * createPaper (one shared paper, one custody chain, possibly multiple
- * centers), each variant here is its own Paper document with its own
- * custody chain and QR — a leaked physical copy can be matched back to
- * exactly one center by its content.
+ * assignedCenterIds — each pulled fresh from the question bank per the
+ * same expanded blueprint (topic+difficulty -> count), independently
+ * shuffled per center. Unlike createPaper (one shared paper, one custody
+ * chain, possibly multiple centers), each variant here is its own Paper
+ * document with its own custody chain and QR — a leaked physical copy can
+ * be matched back to exactly one center by its content. The topic mix
+ * itself (see expandBlueprint) is the same across every center's variant;
+ * only which specific questions fill it, and their order, differs.
  */
 async function generatePaperVariants(input, actor) {
-  const { title, examName, examTime, durationMinutes, assignedCenterIds, subject, topic, blueprint, expectedCustodySteps, selfieImage } =
-    input;
+  const { title, examName, examTime, durationMinutes, assignedCenterIds, subject, blueprint, expectedCustodySteps, selfieImage } = input;
 
-  const pools = {};
-  for (const { difficulty, count } of blueprint) {
-    const filter = { subject, difficulty };
-    if (topic) filter.topic = topic;
-    const pool = await Question.find(filter);
-    if (pool.length < count) {
-      throw new ApiError(
-        400,
-        `Not enough ${difficulty} questions for subject "${subject}"${topic ? ` / topic "${topic}"` : ''} — need ${count}, have ${pool.length}`,
-        undefined,
-        'INSUFFICIENT_QUESTIONS'
-      );
-    }
-    pools[difficulty] = pool;
-  }
+  const expanded = await expandBlueprint(subject, blueprint);
+  const pools = await buildPools(subject, expanded);
 
   const examGroupId = new mongoose.Types.ObjectId();
   const usedContents = new Set();
@@ -85,7 +169,7 @@ async function generatePaperVariants(input, actor) {
     let content;
     let attempts = 0;
     do {
-      selected = pickSelection(pools, blueprint);
+      selected = pickSelection(pools, expanded);
       content = compileContent({ title, examName, questions: selected });
       attempts += 1;
     } while (usedContents.has(content) && attempts < MAX_UNIQUENESS_ATTEMPTS);
@@ -141,6 +225,11 @@ async function generatePaperVariants(input, actor) {
         generated: true,
         questionCount: selected.length,
         totalMarks,
+        // Topic-level counts, not question identity — doesn't defeat the
+        // blind-generation property (Paper.js strips questionIds from
+        // every routine response), just documents the syllabus mix this
+        // variant was built from.
+        topicDistribution: expanded.map((e) => ({ topic: e.topic || '(untagged)', difficulty: e.difficulty, count: e.count })),
       },
     });
 
@@ -150,4 +239,9 @@ async function generatePaperVariants(input, actor) {
   return papers;
 }
 
-module.exports = { generatePaperVariants };
+// expandBlueprint and buildPools are also exported for test/llm.test.js's
+// regression test — see the real duplicate-selection bug documented in
+// docs/llm-integration.md's Testing section, caught by running the real
+// flow end-to-end rather than by the mocked tagQuestion/balanceTopics
+// tests alone.
+module.exports = { generatePaperVariants, expandBlueprint, buildPools };

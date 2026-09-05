@@ -205,22 +205,22 @@ async function accessPaperContent(id, actor, { action, location, deviceId, selfi
       keyId: paper.keyId,
     });
 
-    // Accountability evidence for the one content-access action that
-    // produces a physical, leak-able copy: printing. A live selfie is
-    // required by printContentSchema (not optional) whenever action is
-    // PAPER_PRINTED — decrypt (on-screen view) doesn't carry one and
-    // doesn't need this. See src/verification/.
-    let verificationEvidenceId;
-    if (action === 'PAPER_PRINTED') {
-      const evidence = await VerificationEvidence.create({
-        userId: actor.id,
-        paperId: paper._id,
-        action: 'PAPER_PRINTED',
-        selfieImage,
-        capturedAt: now,
-      });
-      verificationEvidenceId = String(evidence._id);
-    }
+    // Accountability evidence for both content-access actions — decrypting
+    // (on-screen view) exposes the full plaintext to whoever's looking at
+    // the screen, which is already enough to leak it (photograph the
+    // monitor, screenshot, dictate it) without ever hitting "print." An
+    // earlier version of this only recorded evidence for PAPER_PRINTED,
+    // treating printing as the sole leak-risk action; that was a real gap
+    // (found in testing, not a deliberate scope limit) — a live selfie is
+    // required by accessContentSchema for both actions now. See src/verification/.
+    const evidence = await VerificationEvidence.create({
+      userId: actor.id,
+      paperId: paper._id,
+      action,
+      selfieImage,
+      capturedAt: now,
+    });
+    const verificationEvidenceId = String(evidence._id);
 
     await appendAuditLog({
       actorUserId: actor.id,

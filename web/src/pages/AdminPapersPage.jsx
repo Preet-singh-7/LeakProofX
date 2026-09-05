@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPaper, generatePapers, listPapers } from '../api/papers';
 import { extractErrorMessage } from '../api/client';
-import { Badge, Button, Card, EmptyState, ErrorBanner, LoadingSpinner, PageHeader } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBanner, InlineSpinner, LoadingSpinner, PageHeader } from '../components/ui';
 import { SelfieCapture } from '../components/SelfieCapture';
 
 const DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'];
@@ -226,10 +226,9 @@ const initialGenerateForm = {
   durationMinutes: 90,
   assignedCenterIds: '',
   subject: '',
-  topic: '',
 };
 
-const initialBlueprint = [{ difficulty: 'EASY', count: 5 }];
+const initialBlueprint = [{ topic: '', difficulty: 'EASY', count: 5 }];
 
 // One distinct paper is generated per assigned center — the whole point
 // being that each center's copy is provably different, so a leaked physical
@@ -251,7 +250,7 @@ function GeneratePapersForm({ onCreated }) {
   }
 
   function addBlueprintRow() {
-    setBlueprint((rows) => [...rows, { difficulty: 'EASY', count: 1 }]);
+    setBlueprint((rows) => [...rows, { topic: '', difficulty: 'EASY', count: 1 }]);
   }
 
   function removeBlueprintRow(index) {
@@ -283,8 +282,7 @@ function GeneratePapersForm({ onCreated }) {
         durationMinutes: Number(form.durationMinutes),
         assignedCenterIds,
         subject: form.subject,
-        topic: form.topic || undefined,
-        blueprint: blueprint.map((row) => ({ difficulty: row.difficulty, count: Number(row.count) })),
+        blueprint: blueprint.map((row) => ({ topic: row.topic || undefined, difficulty: row.difficulty, count: Number(row.count) })),
         selfieImage,
       });
       setForm(initialGenerateForm);
@@ -378,23 +376,23 @@ function GeneratePapersForm({ onCreated }) {
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
-        <div>
-          <label className="block text-xs font-medium text-slate-500">
-            Topic <span className="font-normal text-slate-400">(optional)</span>
-          </label>
-          <input
-            value={form.topic}
-            onChange={(e) => update('topic', e.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          />
-        </div>
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-slate-500">Blueprint — how many questions of each difficulty</label>
+        <label className="block text-xs font-medium text-slate-500">Blueprint — topic, difficulty, and how many of each</label>
+        <p className="mt-0.5 text-xs text-slate-400">
+          Leave a row's topic blank to let AI spread that row's count across whatever topics exist in the bank, instead of pooling
+          them all together — keeps a paper from accidentally landing all on one topic.
+        </p>
         <div className="mt-1 space-y-2">
           {blueprint.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
+              <input
+                value={row.topic}
+                onChange={(e) => updateBlueprintRow(i, 'topic', e.target.value)}
+                placeholder="Topic (blank = AI-balanced)"
+                className="w-48 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
               <select
                 value={row.difficulty}
                 onChange={(e) => updateBlueprintRow(i, 'difficulty', e.target.value)}
@@ -423,16 +421,27 @@ function GeneratePapersForm({ onCreated }) {
             </div>
           ))}
           <button type="button" onClick={addBlueprintRow} className="text-xs font-medium text-indigo-600 hover:underline">
-            + Add another difficulty
+            + Add another row
           </button>
         </div>
       </div>
 
       <SelfieCapture image={selfieImage} onCapture={setSelfieImage} label="Who is generating these papers" />
 
-      <Button type="submit" disabled={submitting || !selfieImage}>
-        {submitting ? 'Generating…' : 'Generate papers'}
+      <Button type="submit" disabled={submitting || !selfieImage} className="inline-flex items-center gap-2">
+        {submitting ? (
+          <>
+            <InlineSpinner /> Generating…
+          </>
+        ) : (
+          'Generate papers'
+        )}
       </Button>
+      {submitting && (
+        <p className="text-xs text-slate-400">
+          Any row left topic-blank asks AI to balance it across the bank's topics — this can take a few seconds.
+        </p>
+      )}
     </form>
   );
 }

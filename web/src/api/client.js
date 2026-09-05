@@ -69,5 +69,15 @@ apiClient.interceptors.response.use(
 );
 
 export function extractErrorMessage(error) {
-  return error?.response?.data?.message || error?.message || 'Something went wrong';
+  const data = error?.response?.data;
+  const fieldErrors = data?.details?.fieldErrors;
+  if (fieldErrors && Object.keys(fieldErrors).length) {
+    const parts = Object.entries(fieldErrors)
+      .filter(([, messages]) => messages?.length)
+      .map(([field, messages]) => `${field} — ${messages.join(', ')}`);
+    if (parts.length) {
+      return `${data.message || 'Validation failed'}: ${parts.join('; ')}`;
+    }
+  }
+  return data?.message || error?.message || 'Something went wrong';
 }
