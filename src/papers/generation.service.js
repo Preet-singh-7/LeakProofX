@@ -144,18 +144,26 @@ function compileContent({ title, examName, questions }) {
 }
 
 /**
- * Generates one distinct, randomly-assembled paper per entry in
+ * Generates `setsCount` distinct, randomly-assembled papers per entry in
  * assignedCenterIds — each pulled fresh from the question bank per the
  * same expanded blueprint (topic+difficulty -> count), independently
- * shuffled per center. Unlike createPaper (one shared paper, one custody
+ * shuffled every time. Unlike createPaper (one shared paper, one custody
  * chain, possibly multiple centers), each variant here is its own Paper
  * document with its own custody chain and QR — a leaked physical copy can
- * be matched back to exactly one center by its content. The topic mix
- * itself (see expandBlueprint) is the same across every center's variant;
- * only which specific questions fill it, and their order, differs.
+ * be matched back to exactly one center (and, when setsCount > 1, one set)
+ * by its content. The topic mix itself (see expandBlueprint) is the same
+ * across every variant; only which specific questions fill it, and their
+ * order, differs.
+ *
+ * setsCount > 1 exists so an invigilator can hand out Set A/B/C within the
+ * same hall — different neighboring students get different papers, not
+ * just different centers get different papers. uniqueness-retry (below)
+ * is shared across every variant in the whole batch, center and set alike,
+ * so two sets at the same center are guaranteed as distinct as two
+ * different centers would be.
  */
 async function generatePaperVariants(input, actor) {
-  const { title, examName, examTime, durationMinutes, assignedCenterIds, subject, blueprint, expectedCustodySteps, selfieImage } = input;
+  const { title, examName, examTime, durationMinutes, assignedCenterIds, subject, blueprint, expectedCustodySteps, selfieImage, setsCount = 1 } = input;
 
   const expanded = await expandBlueprint(subject, blueprint);
   const pools = await buildPools(subject, expanded);
@@ -165,75 +173,83 @@ async function generatePaperVariants(input, actor) {
   const papers = [];
 
   for (const centerId of assignedCenterIds) {
-    let selected;
-    let content;
-    let attempts = 0;
-    do {
-      selected = pickSelection(pools, expanded);
-      content = compileContent({ title, examName, questions: selected });
-      attempts += 1;
-    } while (usedContents.has(content) && attempts < MAX_UNIQUENESS_ATTEMPTS);
-    usedContents.add(content);
+    for (let setIndex = 0; setIndex < setsCount; setIndex += 1) {
+      // Only label sets when there's more than one — keeps today's titles
+      // (setsCount defaults to 1) byte-for-byte unchanged.
+      const setLabel = setsCount > 1 ? String.fromCharCode(65 + setIndex) : null;
+      const paperTitle = setLabel ? `${title} — Set ${setLabel}` : title;
 
-    const { contentCipher, iv, authTag, keyId } = encryptContent(content);
+      let selected;
+      let content;
+      let attempts = 0;
+      do {
+        selected = pickSelection(pools, expanded);
+        content = compileContent({ title: paperTitle, examName, questions: selected });
+        attempts += 1;
+      } while (usedContents.has(content) && attempts < MAX_UNIQUENESS_ATTEMPTS);
+      usedContents.add(content);
 
-    const paper = await Paper.create({
-      title,
-      examName,
-      boardId: actor.id,
-      contentCipher,
-      iv,
-      authTag,
-      keyId,
-      examTime,
-      durationMinutes,
-      assignedCenterIds: [centerId],
-      expectedCustodySteps,
-      currentCustodyStep: CUSTODY_STEPS.CREATED,
-      status: PAPER_STATUS.SCHEDULED,
-      qrToken: crypto.randomUUID(), // temporary unique placeholder, same pattern as createPaper
-      examGroupId,
-      questionIds: selected.map((q) => q._id),
-    });
+      const { contentCipher, iv, authTag, keyId } = encryptContent(content);
 
-    paper.qrToken = signQrToken(paper._id);
-    await paper.save();
-
-    const evidence = await VerificationEvidence.create({
-      userId: actor.id,
-      paperId: paper._id,
-      action: 'PAPER_CREATED',
-      selfieImage,
-      capturedAt: new Date(),
-    });
-
-    const totalMarks = selected.reduce((sum, q) => sum + q.marks, 0);
-    await appendAuditLog({
-      actorUserId: actor.id,
-      actorRoleId: actor.role,
-      action: 'PAPER_CREATED',
-      targetType: 'Paper',
-      targetId: String(paper._id),
-      metadata: {
-        title,
+      const paper = await Paper.create({
+        title: paperTitle,
         examName,
-        examTime,
+        boardId: actor.id,
+        contentCipher,
+        iv,
+        authTag,
         keyId,
-        verificationEvidenceId: String(evidence._id),
-        examGroupId: String(examGroupId),
-        centerId: String(centerId),
-        generated: true,
-        questionCount: selected.length,
-        totalMarks,
-        // Topic-level counts, not question identity — doesn't defeat the
-        // blind-generation property (Paper.js strips questionIds from
-        // every routine response), just documents the syllabus mix this
-        // variant was built from.
-        topicDistribution: expanded.map((e) => ({ topic: e.topic || '(untagged)', difficulty: e.difficulty, count: e.count })),
-      },
-    });
+        examTime,
+        durationMinutes,
+        assignedCenterIds: [centerId],
+        expectedCustodySteps,
+        currentCustodyStep: CUSTODY_STEPS.CREATED,
+        status: PAPER_STATUS.SCHEDULED,
+        qrToken: crypto.randomUUID(), // temporary unique placeholder, same pattern as createPaper
+        examGroupId,
+        questionIds: selected.map((q) => q._id),
+      });
 
-    papers.push(paper);
+      paper.qrToken = signQrToken(paper._id);
+      await paper.save();
+
+      const evidence = await VerificationEvidence.create({
+        userId: actor.id,
+        paperId: paper._id,
+        action: 'PAPER_CREATED',
+        selfieImage,
+        capturedAt: new Date(),
+      });
+
+      const totalMarks = selected.reduce((sum, q) => sum + q.marks, 0);
+      await appendAuditLog({
+        actorUserId: actor.id,
+        actorRoleId: actor.role,
+        action: 'PAPER_CREATED',
+        targetType: 'Paper',
+        targetId: String(paper._id),
+        metadata: {
+          title: paperTitle,
+          examName,
+          examTime,
+          keyId,
+          verificationEvidenceId: String(evidence._id),
+          examGroupId: String(examGroupId),
+          centerId: String(centerId),
+          setLabel,
+          generated: true,
+          questionCount: selected.length,
+          totalMarks,
+          // Topic-level counts, not question identity — doesn't defeat the
+          // blind-generation property (Paper.js strips questionIds from
+          // every routine response), just documents the syllabus mix this
+          // variant was built from.
+          topicDistribution: expanded.map((e) => ({ topic: e.topic || '(untagged)', difficulty: e.difficulty, count: e.count })),
+        },
+      });
+
+      papers.push(paper);
+    }
   }
 
   return papers;

@@ -33,6 +33,12 @@ const generatePapersSchema = z
       .max(20),
     expectedCustodySteps: z.array(z.enum(CUSTODY_STEP_ORDER)).optional(),
     selfieImage: z.string().min(1),
+    // How many distinct variants to generate per center (e.g. Set A/B/C),
+    // each independently drawn from the question pool — lets an invigilator
+    // hand out different sets within the same hall so neighboring students
+    // don't have matching papers. 1 (the default) is today's existing
+    // one-variant-per-center behavior, unchanged.
+    setsCount: z.number().int().positive().max(26).default(1),
   })
   .strict();
 

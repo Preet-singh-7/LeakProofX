@@ -226,13 +226,15 @@ const initialGenerateForm = {
   durationMinutes: 90,
   assignedCenterIds: '',
   subject: '',
+  setsCount: 1,
 };
 
 const initialBlueprint = [{ topic: '', difficulty: 'EASY', count: 5 }];
 
-// One distinct paper is generated per assigned center — the whole point
-// being that each center's copy is provably different, so a leaked physical
-// copy can be traced back to exactly one center. See generation.service.js.
+// One distinct paper is generated per (center, set) pair — the whole point
+// being that each copy is provably different, so a leaked physical copy can
+// be traced back to exactly one center (and, with more than one set, one
+// set within that center). See generation.service.js.
 function GeneratePapersForm({ onCreated }) {
   const [form, setForm] = useState(initialGenerateForm);
   const [blueprint, setBlueprint] = useState(initialBlueprint);
@@ -284,6 +286,7 @@ function GeneratePapersForm({ onCreated }) {
         subject: form.subject,
         blueprint: blueprint.map((row) => ({ topic: row.topic || undefined, difficulty: row.difficulty, count: Number(row.count) })),
         selfieImage,
+        setsCount: Number(form.setsCount) || 1,
       });
       setForm(initialGenerateForm);
       setBlueprint(initialBlueprint);
@@ -302,12 +305,12 @@ function GeneratePapersForm({ onCreated }) {
       <ErrorBanner message={error} />
       {success && (
         <div className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          Generated {success.length} distinct paper{success.length === 1 ? '' : 's'} — one per center.
+          Generated {success.length} distinct paper{success.length === 1 ? '' : 's'}.
           <ul className="mt-1 space-y-0.5">
             {success.map((p) => (
               <li key={p._id}>
                 <Link to={`/tracking/${p._id}`} className="font-medium underline">
-                  {p.assignedCenterIds?.[0] || p._id} →
+                  {p.title} ({p.assignedCenterIds?.[0] || p._id}) →
                 </Link>
               </li>
             ))}
@@ -357,7 +360,7 @@ function GeneratePapersForm({ onCreated }) {
         </div>
         <div className="col-span-2">
           <label className="block text-xs font-medium text-slate-500">
-            Assigned center IDs <span className="font-normal text-slate-400">(required, comma-separated — one paper generated per center)</span>
+            Assigned center IDs <span className="font-normal text-slate-400">(required, comma-separated — one paper per center, times sets below)</span>
           </label>
           <input
             required
@@ -373,6 +376,20 @@ function GeneratePapersForm({ onCreated }) {
             required
             value={form.subject}
             onChange={(e) => update('subject', e.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-500">
+            Sets per center <span className="font-normal text-slate-400">(e.g. 3 = Set A/B/C, each independently randomized)</span>
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={26}
+            required
+            value={form.setsCount}
+            onChange={(e) => update('setsCount', e.target.value)}
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
